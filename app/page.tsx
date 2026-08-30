@@ -6,46 +6,509 @@ import {supabase,supabaseConfigured} from "@/lib/supabase";
 type Cat="priest"|"party"|"boss"|"guild"|"partner";
 type Screen="home"|"category"|"account"|"mine";
 type Character={id:string;user_id:string;name:string;level:number|null;job:string;server:string};
-type Listing={id:string;user_id:string;character_id:string|null;category:Cat;title:string;subtitle:string|null;server:string;status:string;description:string|null;tags:string[];created_at:string};
-const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:string}>={
- priest:{name:"祭師媒合",short:"祭",desc:"找祈禱、補血與輔助，或刊登自己目前可配合狀態。",image:"/priest.jpg",accent:"#e9872d"},
- party:{name:"組隊任務",short:"隊",desc:"超綠、101、女神等組隊任務找隊伍或開募集。",image:"/party.jpg",accent:"#6d8f3f"},
- boss:{name:"BOSS",short:"王",desc:"預約王團、找缺少的職業與成員。",image:"/boss.jpg",accent:"#7650a0"},
- guild:{name:"公會",short:"會",desc:"找適合自己的公會，或建立長期招生資料。",image:"/guild.jpg",accent:"#4b7eb7"},
- partner:{name:"找夥伴",short:"伴",desc:"找長期一起任務、打王、聊天與成長的玩家。",image:"/partner.jpg",accent:"#cf6170"}
+type CharacterBrief={name:string;level:number|null;job:string}|null;
+type Listing={
+  id:string;user_id:string;character_id:string|null;category:Cat;title:string;
+  subtitle:string|null;server:string;status:string;description:string|null;
+  tags:string[];created_at:string;character?:CharacterBrief
 };
+
+const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:string}>={
+  priest:{name:"祭師媒合",short:"祭",desc:"找祈禱、補血與輔助，或刊登自己目前可配合狀態。",image:"/priest.jpg",accent:"#e9872d"},
+  party:{name:"組隊任務",short:"隊",desc:"超綠、101、女神等組隊任務找隊伍或開募集。",image:"/party.jpg",accent:"#6d8f3f"},
+  boss:{name:"BOSS",short:"王",desc:"預約王團、找缺少的職業與成員。",image:"/boss.jpg",accent:"#7650a0"},
+  guild:{name:"公會",short:"會",desc:"找適合自己的公會，或建立長期招生資料。",image:"/guild.jpg",accent:"#4b7eb7"},
+  partner:{name:"找夥伴",short:"伴",desc:"找長期一起任務、打王、聊天與成長的玩家。",image:"/partner.jpg",accent:"#cf6170"}
+};
+
 const order:Cat[]=["priest","party","boss","guild","partner"];
-const demo:Listing[]=order.map((c,i)=>({id:"demo"+i,user_id:"demo",character_id:null,category:c,title:["小楓","超綠｜缺 1 人","殘暴炎魔｜缺 2 人","晚風旅團","小雨"][i],subtitle:["Lv.83 祭師｜現在可配合","Lv.21～30｜現在","今晚 21:30","晚上活躍","Lv.43 僧侶｜晚上玩家"][i],server:"伺服器 A",status:"active",description:["可配合祈禱與補血，今晚可長時間配合。","現在準備開，新手也可以，預計連打幾場。","目前 4 / 6，缺 1 位祭師與 1 位打手。","休閒為主，新手、回鍋都歡迎，不強制語音。","喜歡解任務、聊天與慢慢玩，希望找長期夥伴。"][i],tags:[["祈禱","補血"],["超綠","新手可"],["祭師","打手"],["新手友善","休閒"],["任務","聊天","長期固定"]][i],created_at:new Date().toISOString()}));
+const statusText:Record<string,string>={
+  active:"目前有效",
+  tonight:"今晚",
+  long_term:"長期",
+  paused:"暫停"
+};
+const contactText:Record<Cat,string>={
+  priest:"聯絡祭師",
+  party:"我想加入",
+  boss:"我要報名",
+  guild:"申請加入",
+  partner:"想認識"
+};
+
+const demo:Listing[]=order.map((c,i)=>({
+  id:"demo"+i,user_id:"demo",character_id:null,category:c,
+  title:["小楓","超綠｜缺 1 人","殘暴炎魔｜缺 2 人","晚風旅團","小雨"][i],
+  subtitle:["Lv.83 祭師｜現在可配合","Lv.21～30｜現在","今晚 21:30","晚上活躍","Lv.43 僧侶｜晚上玩家"][i],
+  server:"伺服器 A",status:"active",
+  description:[
+    "可配合祈禱與補血，今晚可長時間配合。",
+    "現在準備開，新手也可以，預計連打幾場。",
+    "目前 4 / 6，缺 1 位祭師與 1 位打手。",
+    "休閒為主，新手、回鍋都歡迎，不強制語音。",
+    "喜歡解任務、聊天與慢慢玩，希望找長期夥伴。"
+  ][i],
+  tags:[["祈禱","補血"],["超綠","新手可"],["祭師","打手"],["新手友善","休閒"],["任務","聊天","長期固定"]][i],
+  created_at:new Date().toISOString()
+}));
 
 export default function Page(){
- const[screen,setScreen]=useState<Screen>("home"); const[cat,setCat]=useState<Cat>("priest");
- const[user,setUser]=useState<User|null>(null); const[listings,setListings]=useState<Listing[]>(demo); const[characters,setCharacters]=useState<Character[]>([]);
- const[authOpen,setAuthOpen]=useState(false); const[listingOpen,setListingOpen]=useState(false); const[charOpen,setCharOpen]=useState(false); const[email,setEmail]=useState(""); const[toast,setToast]=useState("");
- useEffect(()=>{if(!supabase)return; supabase.auth.getUser().then(({data})=>setUser(data.user??null)); const{data}=supabase.auth.onAuthStateChange((_e,s)=>setUser(s?.user??null)); void refreshListings(); return()=>data.subscription.unsubscribe()},[]);
- useEffect(()=>{if(user)void refreshCharacters(); else setCharacters([])},[user]);
- const show=(m:string)=>{setToast(m);setTimeout(()=>setToast(""),1600)};
- async function refreshListings(){if(!supabase)return;const{data,error}=await supabase.from("listings").select("*").order("created_at",{ascending:false});if(error)return show(error.message);setListings((data??[]) as Listing[])}
- async function refreshCharacters(){if(!supabase||!user)return;const{data,error}=await supabase.from("characters").select("*").eq("user_id",user.id).order("created_at");if(!error)setCharacters((data??[]) as Character[])}
- const requireLogin=(fn:()=>void)=>{if(!supabaseConfigured)return show("尚未連接 Supabase");if(!user)return setAuthOpen(true);fn()};
- async function magic(e:FormEvent){e.preventDefault();if(!supabase||!email)return;const{error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.origin}});if(error)return show(error.message);setAuthOpen(false);show("登入連結已寄到信箱")}
- async function signOut(){if(!supabase)return;await supabase.auth.signOut();setScreen("home");show("已登出")}
- async function addChar(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!supabase||!user)return;const f=new FormData(e.currentTarget);const{error}=await supabase.from("characters").insert({user_id:user.id,name:String(f.get("name")||""),level:Number(f.get("level")||0)||null,job:String(f.get("job")||""),server:String(f.get("server")||"伺服器 A")});if(error)return show(error.message);setCharOpen(false);await refreshCharacters();show("角色已建立")}
- async function delChar(id:string){if(!supabase||!user)return;const{error}=await supabase.from("characters").delete().eq("id",id);if(error)return show(error.message);await refreshCharacters();show("角色已刪除")}
- async function addListing(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!supabase||!user)return;const f=new FormData(e.currentTarget);const tags=String(f.get("tags")||"").split(",").map(x=>x.trim()).filter(Boolean);const{error}=await supabase.from("listings").insert({user_id:user.id,character_id:String(f.get("character_id")||"")||null,category:String(f.get("category")||cat),title:String(f.get("title")||""),subtitle:String(f.get("subtitle")||""),server:String(f.get("server")||"伺服器 A"),status:String(f.get("status")||"active"),description:String(f.get("description")||""),tags});if(error)return show(error.message);setListingOpen(false);await refreshListings();show("刊登已發布")}
- async function delListing(id:string){if(!supabase||!user)return;const{error}=await supabase.from("listings").delete().eq("id",id);if(error)return show(error.message);await refreshListings();show("刊登已刪除")}
- const visible=useMemo(()=>listings.filter(x=>x.category===cat),[listings,cat]); const mine=useMemo(()=>user?listings.filter(x=>x.user_id===user.id):[],[listings,user]);
- const top=(title:string,back?:()=>void,create?:()=>void)=><header className="topbar"><div className="nav"><div className="brand">{back?<button className="back" onClick={back}>‹</button>:<span className="mark">楓</span>}{title}</div><div className="navActions"><button className="btn soft" onClick={()=>setScreen("account")}>{user?"帳號":"登入"}</button>{screen==="home"&&<button className="btn soft desktop" onClick={()=>requireLogin(()=>setScreen("mine"))}>我的刊登</button>}{create&&<button className="btn green" onClick={create}>＋ 刊登</button>}</div></div></header>;
- return <>
-  {!supabaseConfigured&&<div className="setup">正式版程式骨架已完成；填入 Supabase 環境變數後就會啟用真正登入與多人共用資料。</div>}
-  {screen==="home"&&<>{top("楓伴",undefined,()=>requireLogin(()=>setListingOpen(true)))}<main className="wrap"><section className="hero"><div className="heroShade"><span className="kicker">MAPLESTORY CLASSIC 玩家媒合</span><h1>找到一起冒險的人。</h1><p>祭師、組隊任務、BOSS、公會、長期夥伴。資料會真正綁定會員帳號並由所有玩家共用。</p></div></section><div className="sectionTitle"><h2>你今天想找什麼？</h2><p>維持已確認的五大功能與插圖首頁。</p></div><div className="features">{order.map(k=><button key={k} className="feature" style={{backgroundImage:`url(${cats[k].image})`,borderColor:cats[k].accent}} onClick={()=>{setCat(k);setScreen("category");scrollTo(0,0)}}><span className="featureShade"/><span className="featureCopy"><b style={{color:cats[k].accent}}>{cats[k].name}</b><em>{cats[k].desc}</em></span><span className="arrow" style={{color:cats[k].accent}}>›</span></button>)}</div></main></>}
-  {screen==="category"&&<>{top(cats[cat].name,()=>setScreen("home"),()=>requireLogin(()=>setListingOpen(true)))}<main className="wrap"><section className="catHero" style={{borderColor:cats[cat].accent,backgroundImage:`linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,253,248,.93) 72%),url(${cats[cat].image})`}}><div><h1 style={{color:cats[cat].accent}}>{cats[cat].name}</h1><p>{cats[cat].desc}</p></div></section><div className="sectionTitle"><h2>目前刊登</h2><p>共 {visible.length} 筆</p></div><Grid items={visible} uid={user?.id} del={delListing} show={show}/></main></>}
-  {screen==="account"&&<>{top("會員與角色",()=>setScreen("home"))}<main className="wrap"><section className="plain"><span className="kicker">ACCOUNT & CHARACTERS</span><h1>會員與角色資料</h1><p>正式版使用 Email Magic Link 登入，不用另外記密碼。</p></section><div className="sectionTitle"><h2>目前帳號</h2></div><div className="panel row">{user?<><div><b>{user.email}</b><div className="muted">已登入</div></div><button className="btn soft" onClick={signOut}>登出</button></>:<><div><b>尚未登入</b><div className="muted">登入後才能建立角色與刊登。</div></div><button className="btn green" onClick={()=>setAuthOpen(true)}>登入</button></>}</div><div className="sectionTitle"><h2>我的角色</h2><p>一個帳號可以保存多個角色。</p></div><div className="panel">{user?<>{characters.length===0&&<div className="empty">還沒有建立角色。</div>}<div className="charList">{characters.map(c=><div className="char" key={c.id}><div><b>{c.name}</b><div className="muted">Lv.{c.level??"--"} {c.job}｜{c.server}</div></div><button className="btn soft" onClick={()=>delChar(c.id)}>刪除</button></div>)}</div><button className="btn green" onClick={()=>setCharOpen(true)}>＋ 新增角色</button></>:<div className="empty">登入後可建立角色。</div>}</div></main></>}
-  {screen==="mine"&&<>{top("我的刊登",()=>setScreen("home"),()=>setListingOpen(true))}<main className="wrap"><section className="plain"><h1>我的刊登</h1><p>只有目前帳號建立的內容會出現在這裡。</p></section><div className="sectionTitle"><h2>目前資料</h2><p>共 {mine.length} 筆</p></div><Grid items={mine} uid={user?.id} del={delListing} show={show}/></main></>}
-  {authOpen&&<Modal close={()=>setAuthOpen(false)}><h2>登入楓伴</h2><p className="muted">輸入 Email，我們會寄登入連結給你。</p><form className="form" onSubmit={magic}><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><div className="modalActions"><button type="button" className="btn soft" onClick={()=>setAuthOpen(false)}>取消</button><button className="btn green">寄送登入連結</button></div></form></Modal>}
-  {charOpen&&<Modal close={()=>setCharOpen(false)}><h2>新增角色</h2><form className="form two" onSubmit={addChar}><label>角色暱稱<input name="name" required/></label><label>等級<input name="level" type="number" min="1"/></label><label>職業<input name="job" required placeholder="例如：祭師"/></label><label>伺服器<select name="server"><option>伺服器 A</option><option>伺服器 B</option></select></label><div className="modalActions full"><button type="button" className="btn soft" onClick={()=>setCharOpen(false)}>取消</button><button className="btn green">儲存角色</button></div></form></Modal>}
-  {listingOpen&&<Modal close={()=>setListingOpen(false)}><h2>新增刊登</h2><p className="muted">發布後其他玩家就能看到。</p><form className="form two" onSubmit={addListing}><label>分類<select name="category" defaultValue={cat}>{order.map(k=><option key={k} value={k}>{cats[k].name}</option>)}</select></label><label>使用角色<select name="character_id" defaultValue=""><option value="">不綁定角色</option>{characters.map(c=><option key={c.id} value={c.id}>{c.name}｜Lv.{c.level??"--"} {c.job}</option>)}</select></label><label>標題<input name="title" required/></label><label>副標題<input name="subtitle"/></label><label>伺服器<select name="server"><option>伺服器 A</option><option>伺服器 B</option></select></label><label>狀態<select name="status"><option value="active">目前有效</option><option value="tonight">今晚</option><option value="long_term">長期</option><option value="paused">暫停</option></select></label><label className="full">說明<textarea name="description" rows={4}/></label><label className="full">標籤（逗號分隔）<input name="tags" placeholder="祈禱,補血,晚上"/></label><div className="modalActions full"><button type="button" className="btn soft" onClick={()=>setListingOpen(false)}>取消</button><button className="btn green">發布刊登</button></div></form></Modal>}
-  {toast&&<div className="toast">{toast}</div>}
- </>
+  const[screen,setScreen]=useState<Screen>("home");
+  const[cat,setCat]=useState<Cat>("priest");
+  const[user,setUser]=useState<User|null>(null);
+  const[listings,setListings]=useState<Listing[]>(demo);
+  const[characters,setCharacters]=useState<Character[]>([]);
+  const[authOpen,setAuthOpen]=useState(false);
+  const[listingOpen,setListingOpen]=useState(false);
+  const[charOpen,setCharOpen]=useState(false);
+  const[editing,setEditing]=useState<Listing|null>(null);
+  const[email,setEmail]=useState("");
+  const[toast,setToast]=useState("");
+
+  useEffect(()=>{
+    if(!supabase)return;
+    supabase.auth.getUser().then(({data})=>setUser(data.user??null));
+    const{data}=supabase.auth.onAuthStateChange((_e,s)=>setUser(s?.user??null));
+    void refreshListings();
+    return()=>data.subscription.unsubscribe();
+  },[]);
+
+  useEffect(()=>{
+    if(user)void refreshCharacters();
+    else setCharacters([]);
+  },[user]);
+
+  const show=(m:string)=>{
+    setToast(m);
+    setTimeout(()=>setToast(""),1800);
+  };
+
+  async function refreshListings(){
+    if(!supabase)return;
+    const{data,error}=await supabase
+      .from("listings")
+      .select("*, character:characters(name,level,job)")
+      .order("created_at",{ascending:false});
+    if(error)return show(error.message);
+    setListings((data??[]) as Listing[]);
+  }
+
+  async function refreshCharacters(){
+    if(!supabase||!user)return;
+    const{data,error}=await supabase
+      .from("characters")
+      .select("*")
+      .eq("user_id",user.id)
+      .order("created_at");
+    if(!error)setCharacters((data??[]) as Character[]);
+  }
+
+  const requireLogin=(fn:()=>void)=>{
+    if(!supabaseConfigured)return show("尚未連接 Supabase");
+    if(!user){setAuthOpen(true);return;}
+    fn();
+  };
+
+  const openNewListing=()=>{
+    setEditing(null);
+    setListingOpen(true);
+  };
+
+  const openEditListing=(x:Listing)=>{
+    setEditing(x);
+    setCat(x.category);
+    setListingOpen(true);
+  };
+
+  async function magic(e:FormEvent){
+    e.preventDefault();
+    if(!supabase||!email)return show("請輸入完整 Email");
+    const{error}=await supabase.auth.signInWithOtp({
+      email,
+      options:{emailRedirectTo:window.location.origin}
+    });
+    if(error)return show(error.message);
+    setAuthOpen(false);
+    show("登入連結已寄到信箱");
+  }
+
+  async function signOut(){
+    if(!supabase)return;
+    await supabase.auth.signOut();
+    setScreen("home");
+    show("已登出");
+  }
+
+  async function addChar(e:FormEvent<HTMLFormElement>){
+    e.preventDefault();
+    if(!supabase||!user)return;
+    const f=new FormData(e.currentTarget);
+    const{error}=await supabase.from("characters").insert({
+      user_id:user.id,
+      name:String(f.get("name")||""),
+      level:Number(f.get("level")||0)||null,
+      job:String(f.get("job")||""),
+      server:String(f.get("server")||"伺服器 A")
+    });
+    if(error)return show(error.message);
+    setCharOpen(false);
+    await refreshCharacters();
+    show("角色已建立");
+  }
+
+  async function delChar(id:string){
+    if(!supabase||!user)return;
+    const{error}=await supabase.from("characters").delete().eq("id",id);
+    if(error)return show(error.message);
+    await refreshCharacters();
+    show("角色已刪除");
+  }
+
+  async function saveListing(e:FormEvent<HTMLFormElement>){
+    e.preventDefault();
+    if(!supabase||!user)return;
+
+    const f=new FormData(e.currentTarget);
+    const characterId=String(f.get("character_id")||"")||null;
+    const selectedChar=characters.find(c=>c.id===characterId);
+    const tags=String(f.get("tags")||"")
+      .split(",")
+      .map(x=>x.trim())
+      .filter(Boolean);
+
+    const payload={
+      user_id:user.id,
+      character_id:characterId,
+      category:String(f.get("category")||cat),
+      title:String(f.get("title")||"").trim(),
+      subtitle:String(f.get("subtitle")||"").trim(),
+      server:selectedChar?.server||String(f.get("server")||"伺服器 A"),
+      status:String(f.get("status")||"active"),
+      description:String(f.get("description")||"").trim(),
+      tags
+    };
+
+    const wasEditing=Boolean(editing);
+    const result=editing
+      ?await supabase.from("listings").update(payload).eq("id",editing.id).eq("user_id",user.id)
+      :await supabase.from("listings").insert(payload);
+
+    if(result.error)return show(result.error.message);
+
+    setListingOpen(false);
+    setEditing(null);
+    await refreshListings();
+    show(wasEditing?"刊登已更新":"刊登已發布");
+  }
+
+  async function delListing(id:string){
+    if(!supabase||!user)return;
+    const{error}=await supabase.from("listings").delete().eq("id",id);
+    if(error)return show(error.message);
+    await refreshListings();
+    show("刊登已刪除");
+  }
+
+  const visible=useMemo(()=>listings.filter(x=>x.category===cat),[listings,cat]);
+  const mine=useMemo(()=>user?listings.filter(x=>x.user_id===user.id):[],[listings,user]);
+
+  const top=(title:string,back?:()=>void,create?:()=>void)=>
+    <header className="topbar">
+      <div className="nav">
+        <div className="brand">
+          {back?<button className="back" onClick={back}>‹</button>:<span className="mark">楓</span>}
+          {title}
+        </div>
+        <div className="navActions">
+          <button className="btn soft" onClick={()=>setScreen("account")}>{user?"帳號":"登入"}</button>
+          {screen==="home"&&
+            <button className="btn soft desktop" onClick={()=>requireLogin(()=>setScreen("mine"))}>我的刊登</button>
+          }
+          {create&&<button className="btn green" onClick={create}>＋ 刊登</button>}
+        </div>
+      </div>
+    </header>;
+
+  return <>
+    {!supabaseConfigured&&
+      <div className="setup">尚未連接 Supabase，登入與多人資料目前無法使用。</div>
+    }
+
+    {screen==="home"&&<>
+      {top("楓伴",undefined,()=>requireLogin(openNewListing))}
+      <main className="wrap">
+        <section className="hero">
+          <div className="heroShade">
+            <span className="kicker">MAPLESTORY CLASSIC 玩家媒合</span>
+            <h1>找到一起冒險的人。</h1>
+            <p>祭師、組隊任務、BOSS、公會、長期夥伴。資料會真正綁定會員帳號並由所有玩家共用。</p>
+          </div>
+        </section>
+        <div className="sectionTitle">
+          <h2>你今天想找什麼？</h2>
+          <p>五個核心功能。</p>
+        </div>
+        <div className="features">
+          {order.map(k=>
+            <button
+              key={k}
+              className="feature"
+              style={{backgroundImage:`url(${cats[k].image})`,borderColor:cats[k].accent}}
+              onClick={()=>{setCat(k);setScreen("category");scrollTo(0,0)}}
+            >
+              <span className="featureShade"/>
+              <span className="featureCopy">
+                <b style={{color:cats[k].accent}}>{cats[k].name}</b>
+                <em>{cats[k].desc}</em>
+              </span>
+              <span className="arrow" style={{color:cats[k].accent}}>›</span>
+            </button>
+          )}
+        </div>
+      </main>
+    </>}
+
+    {screen==="category"&&<>
+      {top(cats[cat].name,()=>setScreen("home"),()=>requireLogin(openNewListing))}
+      <main className="wrap">
+        <section
+          className="catHero"
+          style={{
+            borderColor:cats[cat].accent,
+            backgroundImage:`linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,253,248,.93) 72%),url(${cats[cat].image})`
+          }}
+        >
+          <div>
+            <h1 style={{color:cats[cat].accent}}>{cats[cat].name}</h1>
+            <p>{cats[cat].desc}</p>
+          </div>
+        </section>
+        <div className="sectionTitle">
+          <h2>目前刊登</h2>
+          <p>共 {visible.length} 筆</p>
+        </div>
+        <Grid items={visible} uid={user?.id} del={delListing} edit={openEditListing} show={show}/>
+      </main>
+    </>}
+
+    {screen==="account"&&<>
+      {top("會員與角色",()=>setScreen("home"))}
+      <main className="wrap">
+        <section className="plain">
+          <span className="kicker">ACCOUNT & CHARACTERS</span>
+          <h1>會員與角色資料</h1>
+          <p>正式版使用 Email Magic Link 登入，不用另外記密碼。</p>
+        </section>
+
+        <div className="sectionTitle"><h2>目前帳號</h2></div>
+        <div className="panel row">
+          {user?<>
+            <div>
+              <b>{user.email}</b>
+              <div className="muted">已登入</div>
+            </div>
+            <button className="btn soft" onClick={signOut}>登出</button>
+          </>:<>
+            <div>
+              <b>尚未登入</b>
+              <div className="muted">登入後才能建立角色與刊登。</div>
+            </div>
+            <button className="btn green" onClick={()=>setAuthOpen(true)}>登入</button>
+          </>}
+        </div>
+
+        <div className="sectionTitle">
+          <h2>我的角色</h2>
+          <p>一個帳號可以保存多個角色。</p>
+        </div>
+        <div className="panel">
+          {user?<>
+            {characters.length===0&&<div className="empty">還沒有建立角色。</div>}
+            <div className="charList">
+              {characters.map(c=>
+                <div className="char" key={c.id}>
+                  <div>
+                    <b>{c.name}</b>
+                    <div className="muted">Lv.{c.level??"--"} {c.job}｜{c.server}</div>
+                  </div>
+                  <button className="btn soft" onClick={()=>delChar(c.id)}>刪除</button>
+                </div>
+              )}
+            </div>
+            <button className="btn green" onClick={()=>setCharOpen(true)}>＋ 新增角色</button>
+          </>:<div className="empty">登入後可建立角色。</div>}
+        </div>
+      </main>
+    </>}
+
+    {screen==="mine"&&<>
+      {top("我的刊登",()=>setScreen("home"),openNewListing)}
+      <main className="wrap">
+        <section className="plain">
+          <h1>我的刊登</h1>
+          <p>只有目前帳號建立的內容會出現在這裡。</p>
+        </section>
+        <div className="sectionTitle">
+          <h2>目前資料</h2>
+          <p>共 {mine.length} 筆</p>
+        </div>
+        <Grid items={mine} uid={user?.id} del={delListing} edit={openEditListing} show={show}/>
+      </main>
+    </>}
+
+    {authOpen&&
+      <Modal close={()=>setAuthOpen(false)}>
+        <h2>登入楓伴</h2>
+        <p className="muted">輸入 Email，我們會寄登入連結給你。</p>
+        <form className="form" onSubmit={magic}>
+          <label>
+            Email
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={e=>setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </label>
+          <div className="modalActions">
+            <button type="button" className="btn soft" onClick={()=>setAuthOpen(false)}>取消</button>
+            <button className="btn green">寄送登入連結</button>
+          </div>
+        </form>
+      </Modal>
+    }
+
+    {charOpen&&
+      <Modal close={()=>setCharOpen(false)}>
+        <h2>新增角色</h2>
+        <form className="form two" onSubmit={addChar}>
+          <label>角色暱稱<input name="name" required/></label>
+          <label>等級<input name="level" type="number" min="1"/></label>
+          <label>職業<input name="job" required placeholder="例如：祭師"/></label>
+          <label>伺服器<select name="server"><option>伺服器 A</option><option>伺服器 B</option></select></label>
+          <div className="modalActions full">
+            <button type="button" className="btn soft" onClick={()=>setCharOpen(false)}>取消</button>
+            <button className="btn green">儲存角色</button>
+          </div>
+        </form>
+      </Modal>
+    }
+
+    {listingOpen&&
+      <Modal close={()=>{setListingOpen(false);setEditing(null)}}>
+        <h2>{editing?"編輯刊登":"新增刊登"}</h2>
+        <p className="muted">{editing?"修改後會直接更新目前的公開資料。":"發布後其他玩家就能看到。"}</p>
+        <form key={editing?.id??"new"} className="form two" onSubmit={saveListing}>
+          <label>
+            分類
+            <select name="category" defaultValue={editing?.category??cat}>
+              {order.map(k=><option key={k} value={k}>{cats[k].name}</option>)}
+            </select>
+          </label>
+          <label>
+            使用角色
+            <select name="character_id" defaultValue={editing?.character_id??""}>
+              <option value="">不綁定角色</option>
+              {characters.map(c=>
+                <option key={c.id} value={c.id}>{c.name}｜Lv.{c.level??"--"} {c.job}</option>
+              )}
+            </select>
+          </label>
+          <label>標題<input name="title" required defaultValue={editing?.title??""}/></label>
+          <label>副標題<input name="subtitle" defaultValue={editing?.subtitle??""}/></label>
+          <label>
+            伺服器
+            <select name="server" defaultValue={editing?.server??"伺服器 A"}>
+              <option>伺服器 A</option>
+              <option>伺服器 B</option>
+            </select>
+          </label>
+          <label>
+            狀態
+            <select name="status" defaultValue={editing?.status??"active"}>
+              <option value="active">目前有效</option>
+              <option value="tonight">今晚</option>
+              <option value="long_term">長期</option>
+              <option value="paused">暫停</option>
+            </select>
+          </label>
+          <label className="full">說明<textarea name="description" rows={4} defaultValue={editing?.description??""}/></label>
+          <label className="full">標籤（逗號分隔）<input name="tags" defaultValue={(editing?.tags??[]).join(",")} placeholder="祈禱,補血,晚上"/></label>
+          <div className="modalActions full">
+            <button type="button" className="btn soft" onClick={()=>{setListingOpen(false);setEditing(null)}}>取消</button>
+            <button className="btn green">{editing?"儲存修改":"發布刊登"}</button>
+          </div>
+        </form>
+      </Modal>
+    }
+
+    {toast&&<div className="toast">{toast}</div>}
+  </>;
 }
-function Grid({items,uid,del,show}:{items:Listing[];uid?:string;del:(id:string)=>void;show:(s:string)=>void}){if(!items.length)return <div className="empty big">目前還沒有刊登。</div>;return <div className="grid">{items.map(x=>{const c=cats[x.category],own=uid===x.user_id;return <article className="card" key={x.id}><div className="cardHead"><div className="profile"><span className="avatar" style={{color:c.accent}}>{c.short}</span><div><h3>{x.title}</h3><div className="muted">{x.subtitle||"未填寫"}｜{x.server}</div></div></div><span className="status">{x.status}</span></div><p className="desc">{x.description||"尚未填寫說明"}</p><div className="tags">{(x.tags||[]).map(t=><span className="tag" key={t}>{t}</span>)}</div><div className="cardActions">{own?<button className="btn danger" onClick={()=>del(x.id)}>刪除</button>:<button className="btn" style={{background:c.accent,color:"#fff"}} onClick={()=>show("正式版下一步會補聯絡流程")}>聯絡／加入</button>}</div></article>})}</div>}
-function Modal({children,close}:{children:React.ReactNode;close:()=>void}){return <div className="backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="modal">{children}</div></div>}
+
+function Grid({
+  items,uid,del,edit,show
+}:{
+  items:Listing[];
+  uid?:string;
+  del:(id:string)=>void;
+  edit:(x:Listing)=>void;
+  show:(s:string)=>void
+}){
+  if(!items.length)return <div className="empty big">目前還沒有刊登。</div>;
+
+  return <div className="grid">
+    {items.map(x=>{
+      const c=cats[x.category];
+      const own=uid===x.user_id;
+      const characterLine=x.character
+        ?`${x.character.name}｜Lv.${x.character.level??"--"} ${x.character.job}`
+        :"";
+      const subtitle=[characterLine,x.subtitle,x.server].filter(Boolean).join("｜");
+
+      return <article className="card" key={x.id}>
+        <div className="cardHead">
+          <div className="profile">
+            <span className="avatar" style={{color:c.accent}}>{c.short}</span>
+            <div>
+              <h3>{x.title}</h3>
+              <div className="muted">{subtitle||"未填寫"}</div>
+            </div>
+          </div>
+          <span className="status">{statusText[x.status]??x.status}</span>
+        </div>
+
+        <p className="desc">{x.description||"尚未填寫說明"}</p>
+
+        <div className="tags">
+          {(x.tags||[]).map(t=><span className="tag" key={t}>{t}</span>)}
+        </div>
+
+        <div className="cardActions" style={{gap:8}}>
+          {own?<>
+            <button className="btn soft" onClick={()=>edit(x)}>編輯</button>
+            <button className="btn danger" onClick={()=>del(x.id)}>刪除</button>
+          </>:
+            <button
+              className="btn"
+              style={{background:c.accent,color:"#fff"}}
+              onClick={()=>show(`${contactText[x.category]}功能下一步接上聯絡資料`)}
+            >
+              {contactText[x.category]}
+            </button>
+          }
+        </div>
+      </article>;
+    })}
+  </div>;
+}
+
+function Modal({children,close}:{children:React.ReactNode;close:()=>void}){
+  return <div
+    className="backdrop"
+    onMouseDown={e=>{if(e.currentTarget===e.target)close()}}
+  >
+    <div className="modal">{children}</div>
+  </div>;
+}
