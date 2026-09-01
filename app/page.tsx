@@ -1,4 +1,5 @@
 "use client";
+// FENGBAN_SECURE_CONTACT_V1_20260901
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -10,7 +11,8 @@ type CharacterBrief={name:string;level:number|null;job:string}|null;
 type Listing={
   id:string;user_id:string;character_id:string|null;category:Cat;title:string;
   subtitle:string|null;server:string;status:string;description:string|null;
-  tags:string[];created_at:string;character?:CharacterBrief
+  tags:string[];created_at:string;character?:CharacterBrief;
+  contact?:{contact_type:string;contact_value:string}|null
 };
 
 const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:string}>={
@@ -34,6 +36,12 @@ const contactText:Record<Cat,string>={
   boss:"我要報名",
   guild:"申請加入",
   partner:"想認識"
+};
+
+const contactTypeText:Record<string,string>={
+  game:"遊戲內暱稱",
+  discord:"Discord",
+  line:"LINE"
 };
 
 const demo:Listing[]=order.map((c,i)=>({
@@ -62,6 +70,7 @@ export default function Page(){
   const[listingOpen,setListingOpen]=useState(false);
   const[charOpen,setCharOpen]=useState(false);
   const[editing,setEditing]=useState<Listing|null>(null);
+  const[contactOpen,setContactOpen]=useState<Listing|null>(null);
   const[email,setEmail]=useState("");
   const[toast,setToast]=useState("");
 
@@ -87,7 +96,7 @@ export default function Page(){
     if(!supabase)return;
     const{data,error}=await supabase
       .from("listings")
-      .select("*, character:characters(name,level,job)")
+      .select("*, character:characters(name,level,job), contact:listing_contacts(contact_type,contact_value)")
       .order("created_at",{ascending:false});
     if(error)return show(error.message);
     setListings((data??[]) as Listing[]);
@@ -176,6 +185,10 @@ export default function Page(){
       .map(x=>x.trim())
       .filter(Boolean);
 
+    const contactType=String(f.get("contact_type")||"game");
+    const contactValue=String(f.get("contact_value")||"").trim();
+    if(!contactValue)return show("請填寫聯絡資料");
+
     const payload={
       user_id:user.id,
       character_id:characterId,
@@ -189,11 +202,35 @@ export default function Page(){
     };
 
     const wasEditing=Boolean(editing);
-    const result=editing
-      ?await supabase.from("listings").update(payload).eq("id",editing.id).eq("user_id",user.id)
-      :await supabase.from("listings").insert(payload);
+    let listingId=editing?.id||"";
 
-    if(result.error)return show(result.error.message);
+    if(editing){
+      const{error}=await supabase
+        .from("listings")
+        .update(payload)
+        .eq("id",editing.id)
+        .eq("user_id",user.id);
+      if(error)return show(error.message);
+    }else{
+      const{data,error}=await supabase
+        .from("listings")
+        .insert(payload)
+        .select("id")
+        .single();
+      if(error)return show(error.message);
+      listingId=data.id;
+    }
+
+    const{error:contactError}=await supabase
+      .from("listing_contacts")
+      .upsert({
+        listing_id:listingId,
+        user_id:user.id,
+        contact_type:contactType,
+        contact_value:contactValue
+      },{onConflict:"listing_id"});
+
+    if(contactError)return show("刊登已儲存，但聯絡資料寫入失敗："+contactError.message);
 
     setListingOpen(false);
     setEditing(null);
@@ -287,7 +324,7 @@ export default function Page(){
           <h2>目前刊登</h2>
           <p>共 {visible.length} 筆</p>
         </div>
-        <Grid items={visible} uid={user?.id} del={delListing} edit={openEditListing} show={show}/>
+        <Grid items={visible} uid={user?.id} del={delListing} edit={openEditListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}}/>
       </main>
     </>}
 
@@ -352,7 +389,7 @@ export default function Page(){
           <h2>目前資料</h2>
           <p>共 {mine.length} 筆</p>
         </div>
-        <Grid items={mine} uid={user?.id} del={delListing} edit={openEditListing} show={show}/>
+        <Grid items={mine} uid={user?.id} del={delListing} edit={openEditListing} contact={(x)=>setContactOpen(x)}/>
       </main>
     </>}
 
@@ -435,6 +472,23 @@ export default function Page(){
           </label>
           <label className="full">說明<textarea name="description" rows={4} defaultValue={editing?.description??""}/></label>
           <label className="full">標籤（逗號分隔）<input name="tags" defaultValue={(editing?.tags??[]).join(",")} placeholder="祈禱,補血,晚上"/></label>
+          <label>
+            聯絡方式
+            <select name="contact_type" defaultValue={editing?.contact?.contact_type??"game"}>
+              <option value="game">遊戲內暱稱</option>
+              <option value="discord">Discord</option>
+              <option value="line">LINE</option>
+            </select>
+          </label>
+          <label>
+            聯絡資料
+            <input
+              name="contact_value"
+              required
+              defaultValue={editing?.contact?.contact_value??""}
+              placeholder="例如：角色名、Discord ID、LINE ID"
+            />
+          </label>
           <div className="modalActions full">
             <button type="button" className="btn soft" onClick={()=>{setListingOpen(false);setEditing(null)}}>取消</button>
             <button className="btn green">{editing?"儲存修改":"發布刊登"}</button>
@@ -443,18 +497,50 @@ export default function Page(){
       </Modal>
     }
 
+    {contactOpen&&
+      <Modal close={()=>setContactOpen(null)}>
+        <h2>{contactText[contactOpen.category]}</h2>
+        <p className="muted">聯絡資料僅提供給已登入會員查看。</p>
+        <div className="panel" style={{marginTop:14}}>
+          <div className="muted">{contactTypeText[contactOpen.contact?.contact_type??""]??"聯絡方式"}</div>
+          <div style={{fontSize:20,fontWeight:900,marginTop:6,wordBreak:"break-all"}}>
+            {contactOpen.contact?.contact_value||"尚未設定聯絡資料"}
+          </div>
+        </div>
+        <div className="modalActions" style={{marginTop:14}}>
+          <button className="btn soft" onClick={()=>setContactOpen(null)}>關閉</button>
+          <button
+            className="btn green"
+            disabled={!contactOpen.contact?.contact_value}
+            onClick={async()=>{
+              const value=contactOpen.contact?.contact_value;
+              if(!value)return;
+              try{
+                await navigator.clipboard.writeText(value);
+                show("已複製聯絡資料");
+              }catch{
+                show("無法自動複製，請長按文字複製");
+              }
+            }}
+          >
+            複製聯絡資料
+          </button>
+        </div>
+      </Modal>
+    }
+
     {toast&&<div className="toast">{toast}</div>}
   </>;
 }
 
 function Grid({
-  items,uid,del,edit,show
+  items,uid,del,edit,contact
 }:{
   items:Listing[];
   uid?:string;
   del:(id:string)=>void;
   edit:(x:Listing)=>void;
-  show:(s:string)=>void
+  contact:(x:Listing)=>void
 }){
   if(!items.length)return <div className="empty big">目前還沒有刊登。</div>;
 
@@ -493,7 +579,7 @@ function Grid({
             <button
               className="btn"
               style={{background:c.accent,color:"#fff"}}
-              onClick={()=>show(`${contactText[x.category]}功能下一步接上聯絡資料`)}
+              onClick={()=>contact(x)}
             >
               {contactText[x.category]}
             </button>
