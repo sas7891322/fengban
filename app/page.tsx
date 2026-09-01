@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_EMAIL_PASSWORD_AUTH_V2_INACTIVITY_24H_20260902
+// FENGBAN_SEARCH_FILTER_V3_20260902
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -76,6 +76,11 @@ export default function Page(){
   const[email,setEmail]=useState("");
   const[password,setPassword]=useState("");
   const[newPassword,setNewPassword]=useState("");
+  const[searchText,setSearchText]=useState("");
+  const[filterOpen,setFilterOpen]=useState(false);
+  const[serverFilter,setServerFilter]=useState("all");
+  const[statusFilter,setStatusFilter]=useState("all");
+  const[tagFilter,setTagFilter]=useState("all");
   const[toast,setToast]=useState("");
 
   useEffect(()=>{
@@ -90,6 +95,14 @@ export default function Page(){
     if(user)void refreshCharacters();
     else setCharacters([]);
   },[user]);
+
+  useEffect(()=>{
+    setSearchText("");
+    setFilterOpen(false);
+    setServerFilter("all");
+    setStatusFilter("all");
+    setTagFilter("all");
+  },[cat]);
 
   useEffect(()=>{
     if(!supabase||!user)return;
@@ -363,6 +376,62 @@ export default function Page(){
   }
 
   const visible=useMemo(()=>listings.filter(x=>x.category===cat),[listings,cat]);
+
+  const serverOptions=useMemo(
+    ()=>Array.from(new Set(visible.map(x=>x.server).filter(Boolean))).sort(),
+    [visible]
+  );
+
+  const tagOptions=useMemo(
+    ()=>Array.from(new Set(visible.flatMap(x=>x.tags??[]).filter(Boolean))).sort(),
+    [visible]
+  );
+
+  const filteredVisible=useMemo(()=>{
+    const q=searchText.trim().toLowerCase();
+    return visible.filter(x=>{
+      if(serverFilter!=="all"&&x.server!==serverFilter)return false;
+      if(statusFilter!=="all"&&x.status!==statusFilter)return false;
+      if(tagFilter!=="all"&&!(x.tags??[]).includes(tagFilter))return false;
+
+      if(q){
+        const haystack=[
+          x.title,
+          x.subtitle??"",
+          x.description??"",
+          x.server,
+          x.character?.name??"",
+          x.character?.job??"",
+          ...(x.tags??[])
+        ].join(" ").toLowerCase();
+
+        if(!haystack.includes(q))return false;
+      }
+
+      return true;
+    });
+  },[visible,searchText,serverFilter,statusFilter,tagFilter]);
+
+  const activeFilterCount=[
+    serverFilter!=="all",
+    statusFilter!=="all",
+    tagFilter!=="all"
+  ].filter(Boolean).length;
+
+  const hasAnyFilter=Boolean(
+    searchText.trim()||
+    serverFilter!=="all"||
+    statusFilter!=="all"||
+    tagFilter!=="all"
+  );
+
+  const clearFilters=()=>{
+    setSearchText("");
+    setServerFilter("all");
+    setStatusFilter("all");
+    setTagFilter("all");
+  };
+
   const mine=useMemo(()=>user?listings.filter(x=>x.user_id===user.id):[],[listings,user]);
 
   const top=(title:string,back?:()=>void,create?:()=>void)=>
@@ -438,9 +507,69 @@ export default function Page(){
         </section>
         <div className="sectionTitle">
           <h2>目前刊登</h2>
-          <p>共 {visible.length} 筆</p>
+          <p>顯示 {filteredVisible.length} / {visible.length} 筆</p>
         </div>
-        <Grid items={visible} uid={user?.id} del={delListing} edit={openEditListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}}/>
+
+        <div className="panel" style={{marginBottom:18}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <input
+              value={searchText}
+              onChange={e=>setSearchText(e.target.value)}
+              placeholder="搜尋暱稱、職業、標題、標籤…"
+              aria-label="搜尋刊登"
+              style={{flex:"1 1 220px"}}
+            />
+            <button
+              type="button"
+              className="btn soft"
+              onClick={()=>setFilterOpen(v=>!v)}
+            >
+              篩選{activeFilterCount>0?` (${activeFilterCount})`:""}
+            </button>
+            {hasAnyFilter&&
+              <button type="button" className="btn soft" onClick={clearFilters}>
+                清除
+              </button>
+            }
+          </div>
+
+          {filterOpen&&
+            <div className="form two" style={{marginTop:14}}>
+              <label>
+                伺服器
+                <select value={serverFilter} onChange={e=>setServerFilter(e.target.value)}>
+                  <option value="all">全部伺服器</option>
+                  {serverOptions.map(server=>
+                    <option key={server} value={server}>{server}</option>
+                  )}
+                </select>
+              </label>
+
+              <label>
+                狀態
+                <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+                  <option value="all">全部狀態</option>
+                  <option value="active">目前有效</option>
+                  <option value="tonight">今晚</option>
+                  <option value="long_term">長期</option>
+                  <option value="paused">暫停</option>
+                </select>
+              </label>
+
+              <label className="full">
+                標籤
+                <select value={tagFilter} onChange={e=>setTagFilter(e.target.value)}>
+                  <option value="all">全部標籤</option>
+                  {tagOptions.map(tag=>
+                    <option key={tag} value={tag}>{tag}</option>
+                  )}
+                </select>
+              </label>
+            </div>
+          }
+        </div>
+
+        <Grid items={filteredVisible} uid={user?.id} del={delListing} edit={openEditListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}}/>
       </main>
     </>}
 
