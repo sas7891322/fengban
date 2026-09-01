@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_SECURE_CONTACT_V1_20260901
+// FENGBAN_EMAIL_PASSWORD_AUTH_V1_20260902
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -72,6 +72,8 @@ export default function Page(){
   const[editing,setEditing]=useState<Listing|null>(null);
   const[contactOpen,setContactOpen]=useState<Listing|null>(null);
   const[email,setEmail]=useState("");
+  const[password,setPassword]=useState("");
+  const[newPassword,setNewPassword]=useState("");
   const[toast,setToast]=useState("");
 
   useEffect(()=>{
@@ -129,16 +131,53 @@ export default function Page(){
     setListingOpen(true);
   };
 
-  async function magic(e:FormEvent){
+  async function passwordLogin(e:FormEvent){
     e.preventDefault();
-    if(!supabase||!email)return show("請輸入完整 Email");
+    if(!supabase||!email||!password)return show("請輸入 Email 與密碼");
+    const{error}=await supabase.auth.signInWithPassword({email,password});
+    if(error)return show("登入失敗："+error.message);
+    setAuthOpen(false);
+    setPassword("");
+    show("登入成功");
+  }
+
+  async function registerAccount(){
+    if(!supabase||!email||!password)return show("請輸入 Email 與密碼");
+    if(password.length<6)return show("密碼至少需要 6 個字元");
+    const{data,error}=await supabase.auth.signUp({
+      email,
+      password,
+      options:{emailRedirectTo:window.location.origin}
+    });
+    if(error)return show("註冊失敗："+error.message);
+    if(data.session){
+      setAuthOpen(false);
+      setPassword("");
+      show("註冊並登入成功");
+    }else{
+      show("註冊完成，請到信箱做一次 Email 驗證");
+    }
+  }
+
+  async function magicLink(){
+    if(!supabase||!email)return show("請先輸入 Email");
     const{error}=await supabase.auth.signInWithOtp({
       email,
       options:{emailRedirectTo:window.location.origin}
     });
     if(error)return show(error.message);
     setAuthOpen(false);
-    show("登入連結已寄到信箱");
+    show("一次性登入連結已寄到信箱");
+  }
+
+  async function changePassword(e:FormEvent){
+    e.preventDefault();
+    if(!supabase||!user)return;
+    if(newPassword.length<6)return show("密碼至少需要 6 個字元");
+    const{error}=await supabase.auth.updateUser({password:newPassword});
+    if(error)return show("設定密碼失敗："+error.message);
+    setNewPassword("");
+    show("密碼已設定，之後可直接用 Email＋密碼登入");
   }
 
   async function signOut(){
@@ -334,7 +373,7 @@ export default function Page(){
         <section className="plain">
           <span className="kicker">ACCOUNT & CHARACTERS</span>
           <h1>會員與角色資料</h1>
-          <p>正式版使用 Email Magic Link 登入，不用另外記密碼。</p>
+          <p>使用 Email＋密碼登入，登入狀態會保留在這台裝置；除非主動登出或瀏覽器清除網站資料。</p>
         </section>
 
         <div className="sectionTitle"><h2>目前帳號</h2></div>
@@ -353,6 +392,30 @@ export default function Page(){
             <button className="btn green" onClick={()=>setAuthOpen(true)}>登入</button>
           </>}
         </div>
+
+        {user&&<>
+          <div className="sectionTitle">
+            <h2>登入密碼</h2>
+            <p>舊的 Magic Link 帳號可在這裡設定密碼；之後不必每次收驗證信。</p>
+          </div>
+          <div className="panel">
+            <form className="form" onSubmit={changePassword}>
+              <label>
+                新密碼
+                <input
+                  type="password"
+                  minLength={6}
+                  required
+                  value={newPassword}
+                  onChange={e=>setNewPassword(e.target.value)}
+                  placeholder="至少 6 個字元"
+                  autoComplete="new-password"
+                />
+              </label>
+              <button className="btn green">設定／更改密碼</button>
+            </form>
+          </div>
+        </>}
 
         <div className="sectionTitle">
           <h2>我的角色</h2>
@@ -394,10 +457,10 @@ export default function Page(){
     </>}
 
     {authOpen&&
-      <Modal close={()=>setAuthOpen(false)}>
+      <Modal close={()=>{setAuthOpen(false);setPassword("")}}>
         <h2>登入楓伴</h2>
-        <p className="muted">輸入 Email，我們會寄登入連結給你。</p>
-        <form className="form" onSubmit={magic}>
+        <p className="muted">使用 Email＋密碼登入。成功登入後，這台裝置會保持登入狀態。</p>
+        <form className="form" onSubmit={passwordLogin}>
           <label>
             Email
             <input
@@ -406,12 +469,30 @@ export default function Page(){
               value={email}
               onChange={e=>setEmail(e.target.value)}
               placeholder="you@example.com"
+              autoComplete="email"
+            />
+          </label>
+          <label>
+            密碼
+            <input
+              type="password"
+              required
+              minLength={6}
+              value={password}
+              onChange={e=>setPassword(e.target.value)}
+              placeholder="至少 6 個字元"
+              autoComplete="current-password"
             />
           </label>
           <div className="modalActions">
-            <button type="button" className="btn soft" onClick={()=>setAuthOpen(false)}>取消</button>
-            <button className="btn green">寄送登入連結</button>
+            <button type="button" className="btn soft" onClick={()=>{setAuthOpen(false);setPassword("")}}>取消</button>
+            <button className="btn green">登入</button>
           </div>
+          <button type="button" className="btn soft" onClick={registerAccount}>註冊新帳號</button>
+          <div className="muted" style={{textAlign:"center",marginTop:4}}>
+            舊帳號還沒設定密碼，或忘記密碼？
+          </div>
+          <button type="button" className="btn soft" onClick={magicLink}>寄一次性登入連結</button>
         </form>
       </Modal>
     }
