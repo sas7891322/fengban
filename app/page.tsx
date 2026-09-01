@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_EMAIL_PASSWORD_AUTH_V1_20260902
+// FENGBAN_EMAIL_PASSWORD_AUTH_V2_INACTIVITY_24H_20260902
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -24,6 +24,8 @@ const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:
 };
 
 const order:Cat[]=["priest","party","boss","guild","partner"];
+const INACTIVITY_LIMIT_MS=24*60*60*1000;
+const LAST_ACTIVITY_KEY="fengban_last_activity";
 const statusText:Record<string,string>={
   active:"目前有效",
   tonight:"今晚",
@@ -87,6 +89,80 @@ export default function Page(){
   useEffect(()=>{
     if(user)void refreshCharacters();
     else setCharacters([]);
+  },[user]);
+
+  useEffect(()=>{
+    if(!supabase||!user)return;
+
+    let timer:number|undefined;
+
+    const clearTimer=()=>{
+      if(timer!==undefined){
+        window.clearTimeout(timer);
+        timer=undefined;
+      }
+    };
+
+    const logoutForInactivity=async()=>{
+      clearTimer();
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
+      await supabase.auth.signOut();
+      setScreen("home");
+      show("已超過 24 小時未使用，請重新登入");
+    };
+
+    const scheduleLogout=(lastActivity:number)=>{
+      clearTimer();
+      const remaining=INACTIVITY_LIMIT_MS-(Date.now()-lastActivity);
+      if(remaining<=0){
+        void logoutForInactivity();
+        return false;
+      }
+      timer=window.setTimeout(()=>void logoutForInactivity(),remaining);
+      return true;
+    };
+
+    const saved=Number(localStorage.getItem(LAST_ACTIVITY_KEY)||0);
+    if(saved&&Date.now()-saved>=INACTIVITY_LIMIT_MS){
+      void logoutForInactivity();
+      return;
+    }
+
+    const initialActivity=saved||Date.now();
+    localStorage.setItem(LAST_ACTIVITY_KEY,String(initialActivity));
+    scheduleLogout(initialActivity);
+
+    let lastWrite=0;
+    const markActivity=()=>{
+      const now=Date.now();
+      if(now-lastWrite<15000)return;
+      lastWrite=now;
+      localStorage.setItem(LAST_ACTIVITY_KEY,String(now));
+      scheduleLogout(now);
+    };
+
+    const onVisibilityChange=()=>{
+      if(document.visibilityState!=="visible")return;
+      const last=Number(localStorage.getItem(LAST_ACTIVITY_KEY)||0);
+      if(last&&Date.now()-last>=INACTIVITY_LIMIT_MS){
+        void logoutForInactivity();
+        return;
+      }
+      markActivity();
+    };
+
+    window.addEventListener("pointerdown",markActivity,{passive:true});
+    window.addEventListener("keydown",markActivity);
+    window.addEventListener("scroll",markActivity,{passive:true});
+    document.addEventListener("visibilitychange",onVisibilityChange);
+
+    return()=>{
+      clearTimer();
+      window.removeEventListener("pointerdown",markActivity);
+      window.removeEventListener("keydown",markActivity);
+      window.removeEventListener("scroll",markActivity);
+      document.removeEventListener("visibilitychange",onVisibilityChange);
+    };
   },[user]);
 
   const show=(m:string)=>{
@@ -182,6 +258,7 @@ export default function Page(){
 
   async function signOut(){
     if(!supabase)return;
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
     await supabase.auth.signOut();
     setScreen("home");
     show("已登出");
@@ -381,7 +458,7 @@ export default function Page(){
           {user?<>
             <div>
               <b>{user.email}</b>
-              <div className="muted">已登入</div>
+              <div className="muted">已登入｜連續 24 小時未使用會自動登出</div>
             </div>
             <button className="btn soft" onClick={signOut}>登出</button>
           </>:<>
@@ -459,7 +536,7 @@ export default function Page(){
     {authOpen&&
       <Modal close={()=>{setAuthOpen(false);setPassword("")}}>
         <h2>登入楓伴</h2>
-        <p className="muted">使用 Email＋密碼登入。成功登入後，這台裝置會保持登入狀態。</p>
+        <p className="muted">使用 Email＋密碼登入。登入後會保持登入；若連續 24 小時未使用楓伴，系統會自動登出。</p>
         <form className="form" onSubmit={passwordLogin}>
           <label>
             Email
