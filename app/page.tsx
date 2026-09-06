@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_FOCUS_V13_HOTFIX1_20260907
+// FENGBAN_BETA_FOCUS_V13_REORDER_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -42,7 +42,7 @@ const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:
   partner:{name:"找夥伴",short:"伴",desc:"找長期一起任務、打王、聊天與成長的玩家。",image:"/partner.jpg",accent:"#cf6170"}
 };
 
-const order:Cat[]=["priest","party","boss","guild","partner"];
+const order:Cat[]=["guild","partner","priest","party","boss"];
 const categoryOpen:Record<Cat,boolean>={
   priest:false,
   party:false,
