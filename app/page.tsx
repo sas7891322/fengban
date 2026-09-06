@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_POLISH_V11_HOTFIX2_20260906
+// FENGBAN_BETA_FOCUS_V13_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -43,6 +43,13 @@ const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:
 };
 
 const order:Cat[]=["priest","party","boss","guild","partner"];
+const categoryOpen:Record<Cat,boolean>={
+  priest:false,
+  party:false,
+  boss:false,
+  guild:true,
+  partner:true
+};
 const INACTIVITY_LIMIT_MS=24*60*60*1000;
 const LAST_ACTIVITY_KEY="fengban_last_activity";
 const DEFAULT_EXPIRY_HOURS:Record<Cat,number>={
@@ -182,7 +189,7 @@ const demo:Listing[]=order.map((c,i)=>({
 
 export default function Page(){
   const[screen,setScreen]=useState<Screen>("home");
-  const[cat,setCat]=useState<Cat>("priest");
+  const[cat,setCat]=useState<Cat>("guild");
   const[user,setUser]=useState<User|null>(null);
   const[listings,setListings]=useState<Listing[]>(supabaseConfigured?[]:demo);
   const[listingsLoading,setListingsLoading]=useState(supabaseConfigured);
@@ -203,7 +210,7 @@ export default function Page(){
   const[newPassword,setNewPassword]=useState("");
   const[searchText,setSearchText]=useState("");
   const[filterOpen,setFilterOpen]=useState(false);
-  const[listingCategory,setListingCategory]=useState<Cat>("priest");
+  const[listingCategory,setListingCategory]=useState<Cat>("guild");
   const[serverFilter,setServerFilter]=useState("all");
   const[statusFilter,setStatusFilter]=useState("all");
   const[tagFilter,setTagFilter]=useState("all");
@@ -430,6 +437,10 @@ export default function Page(){
   };
 
   const openNewListing=()=>{
+    if(!categoryOpen[cat]){
+      show(`${cats[k].name}目前暫未開放`);
+      return;
+    }
     setEditing(null);
     setListingCategory(cat);
     setListingOpen(true);
@@ -542,6 +553,9 @@ export default function Page(){
     if(!contactValue)return show("請填寫聯絡資料");
 
     const selectedCategory=String(f.get("category")||cat) as Cat;
+    if(!categoryOpen[selectedCategory]){
+      return show(`${cats[selectedCategory].name}目前暫未開放，請選擇公會或找夥伴`);
+    }
     const expiryChoice=String(f.get("expiry_hours")||DEFAULT_EXPIRY_HOURS[selectedCategory]);
     const expiresAt=editing&&expiryChoice==="keep"
       ?editing.expires_at
@@ -804,6 +818,7 @@ export default function Page(){
 
   const visible=useMemo(
     ()=>listings.filter(x=>
+      categoryOpen[x.category]&&
       x.category===cat&&
       !expiredAt(x.expires_at,now)&&
       !blockedUserIds.includes(x.user_id)
@@ -905,6 +920,7 @@ export default function Page(){
   const activeHomeListings=useMemo(
     ()=>listings
       .filter(x=>
+        categoryOpen[x.category]&&
         !expiredAt(x.expires_at,now)&&
         x.status!=="paused"&&
         !blockedUserIds.includes(x.user_id)
@@ -967,6 +983,14 @@ export default function Page(){
           </div>
         }
 
+        <div className="panel" style={{marginTop:18}}>
+          <b>Public Beta 目前開放</b>
+          <div className="muted" style={{marginTop:6}}>
+            現階段先集中測試「公會」與「找夥伴」兩個最實用的媒合功能。
+            祭師媒合、組隊任務與 BOSS 將依遊戲版本與玩家需求逐步開放。
+          </div>
+        </div>
+
         <div className="sectionTitle">
           <h2>你今天想找什麼？</h2>
           <p>五個核心功能。</p>
@@ -977,14 +1001,22 @@ export default function Page(){
               key={k}
               className="feature"
               style={{backgroundImage:`url(${cats[k].image})`,borderColor:cats[k].accent}}
-              onClick={()=>{setCat(k);setScreen("category");scrollTo(0,0)}}
+              onClick={()=>{
+                if(!categoryOpen[k]){
+                  show(`${cats[k].name}目前暫未開放`);
+                  return;
+                }
+                setCat(k);
+                setScreen("category");
+                scrollTo(0,0);
+              }}
             >
               <span className="featureShade"/>
               <span className="featureCopy">
                 <b style={{color:cats[k].accent}}>{cats[k].name}</b>
                 <em>{cats[k].desc}</em>
                 <small style={{marginTop:6,fontWeight:800}}>
-                  目前 {categoryCounts[k]} 筆有效刊登
+                  {categoryOpen[k]?`目前 ${categoryCounts[k]} 筆有效刊登`:"🔒 目前暫未開放"}
                 </small>
               </span>
               <span className="arrow" style={{color:cats[k].accent}}>›</span>
@@ -1039,7 +1071,11 @@ export default function Page(){
     </>}
 
     {screen==="category"&&<>
-      {top(cats[cat].name,()=>setScreen("home"),()=>requireLogin(openNewListing))}
+      {top(
+        cats[cat].name,
+        ()=>setScreen("home"),
+        categoryOpen[cat]?()=>requireLogin(openNewListing):undefined
+      )}
       <main className="wrap">
         <section
           className="catHero"
@@ -1053,6 +1089,18 @@ export default function Page(){
             <p>{cats[cat].desc}</p>
           </div>
         </section>
+
+        {!categoryOpen[cat]&&
+          <div className="panel" style={{marginBottom:18,textAlign:"center"}}>
+            <div style={{fontSize:28,marginBottom:6}}>🔒</div>
+            <b>{cats[cat].name}目前暫未開放</b>
+            <div className="muted" style={{marginTop:6}}>
+              Public Beta 目前先集中開放「公會」與「找夥伴」。其他分類會依遊戲版本與實際需求逐步開放。
+            </div>
+          </div>
+        }
+
+        {categoryOpen[cat]&&<>
         <div className="sectionTitle">
           <h2>目前刊登</h2>
           <p>顯示 {filteredVisible.length} / {visible.length} 筆</p>
@@ -1147,6 +1195,7 @@ export default function Page(){
               </div>
               :<Grid items={filteredVisible} uid={user?.id} del={delListing} edit={openEditListing} renew={renewListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}} favoriteIds={favoriteIds} toggleFavorite={toggleFavorite} safety={(x)=>{if(!user){setAuthOpen(true);return;}setSafetyOpen(x)}} now={now}/>
         }
+        </>}
       </main>
     </>}
 
@@ -1519,7 +1568,11 @@ export default function Page(){
               value={listingCategory}
               onChange={e=>setListingCategory(e.target.value as Cat)}
             >
-              {order.map(k=><option key={k} value={k}>{cats[k].name}</option>)}
+              {order.map(k=>
+                <option key={k} value={k} disabled={!categoryOpen[k]}>
+                  {cats[k].name}{categoryOpen[k]?"":"（尚未開放）"}
+                </option>
+              )}
             </select>
           </label>
           <label>
@@ -1806,7 +1859,12 @@ export default function Page(){
       <button
         className="btn green"
         style={{flex:1,padding:"10px 6px"}}
-        onClick={()=>requireLogin(openNewListing)}
+        onClick={()=>requireLogin(()=>{
+          if(!categoryOpen[cat])setCat("guild");
+          setEditing(null);
+          setListingCategory(categoryOpen[cat]?cat:"guild");
+          setListingOpen(true);
+        })}
       >
         ＋ 刊登
       </button>
