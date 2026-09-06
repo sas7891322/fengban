@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_POLISH_V11_HOTFIX1_20260906
+// FENGBAN_BETA_POLISH_V11_HOTFIX2_20260906
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -412,7 +412,15 @@ export default function Page(){
       .limit(100);
 
     if(error)return show(friendlyError(error.message));
-    setAdminReports((data??[]) as AdminReport[]);
+
+    const normalized=(data??[]).map(row=>({
+      ...row,
+      listing:Array.isArray(row.listing)
+        ?(row.listing[0]??null)
+        :(row.listing??null)
+    }));
+
+    setAdminReports(normalized as unknown as AdminReport[]);
   }
 
   const requireLogin=(fn:()=>void)=>{
