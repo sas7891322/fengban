@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_FOCUS_V13_20260907
+// FENGBAN_BETA_FOCUS_V13_HOTFIX1_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -438,7 +438,7 @@ export default function Page(){
 
   const openNewListing=()=>{
     if(!categoryOpen[cat]){
-      show(`${cats[k].name}目前暫未開放`);
+      show(`${cats[cat].name}目前暫未開放`);
       return;
     }
     setEditing(null);
