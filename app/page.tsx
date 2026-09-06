@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_FOCUS_V13_REORDER_20260907
+// FENGBAN_REAL_SERVERS_V13_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -43,6 +43,7 @@ const cats:Record<Cat,{name:string;short:string;desc:string;image:string;accent:
 };
 
 const order:Cat[]=["guild","partner","priest","party","boss"];
+const gameServers=["雪吉拉","菇菇寶貝"] as const;
 const categoryOpen:Record<Cat,boolean>={
   priest:false,
   party:false,
@@ -174,7 +175,7 @@ const demo:Listing[]=order.map((c,i)=>({
   id:"demo"+i,user_id:"demo",character_id:null,category:c,
   title:["小楓","超綠｜缺 1 人","殘暴炎魔｜缺 2 人","晚風旅團","小雨"][i],
   subtitle:["Lv.83 祭師｜現在可配合","Lv.21～30｜現在","今晚 21:30","晚上活躍","Lv.43 僧侶｜晚上玩家"][i],
-  server:"伺服器 A",status:"active",
+  server:gameServers[i%gameServers.length],status:"active",
   description:[
     "可配合祈禱與補血，今晚可長時間配合。",
     "現在準備開，新手也可以，預計連打幾場。",
@@ -519,7 +520,7 @@ export default function Page(){
       name:String(f.get("name")||""),
       level:Number(f.get("level")||0)||null,
       job:String(f.get("job")||""),
-      server:String(f.get("server")||"伺服器 A")
+      server:String(f.get("server")||"雪吉拉")
     });
     if(error)return show(friendlyError(error.message));
     setCharOpen(false);
@@ -609,7 +610,7 @@ export default function Page(){
       category:selectedCategory,
       title:String(f.get("title")||"").trim(),
       subtitle:String(f.get("subtitle")||"").trim(),
-      server:selectedChar?.server||String(f.get("server")||"伺服器 A"),
+      server:selectedChar?.server||String(f.get("server")||"雪吉拉"),
       status:String(f.get("status")||"active"),
       description:String(f.get("description")||"").trim(),
       tags,
@@ -1539,7 +1540,12 @@ export default function Page(){
           <label>角色暱稱<input name="name" required/></label>
           <label>等級<input name="level" type="number" min="1"/></label>
           <label>職業<input name="job" required placeholder="例如：祭師"/></label>
-          <label>伺服器<select name="server"><option>伺服器 A</option><option>伺服器 B</option></select></label>
+          <label>
+            伺服器
+            <select name="server" required>
+              {gameServers.map(server=><option key={server}>{server}</option>)}
+            </select>
+          </label>
           <div className="modalActions full">
             <button type="button" className="btn soft" onClick={()=>setCharOpen(false)}>取消</button>
             <button className="btn green">儲存角色</button>
@@ -1588,9 +1594,9 @@ export default function Page(){
           <label>副標題<input name="subtitle" defaultValue={editing?.subtitle??""}/></label>
           <label>
             伺服器
-            <select name="server" defaultValue={editing?.server??"伺服器 A"}>
-              <option>伺服器 A</option>
-              <option>伺服器 B</option>
+            <select name="server" defaultValue={editing?.server??characters[0]?.server??gameServers[0]}>
+              <option>雪吉拉</option>
+              <option>菇菇寶貝</option>
             </select>
           </label>
           <label>
