@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_REAL_SERVERS_V13_20260907
+// FENGBAN_TRAFFIC_V14_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -53,6 +53,8 @@ const categoryOpen:Record<Cat,boolean>={
 };
 const INACTIVITY_LIMIT_MS=24*60*60*1000;
 const LAST_ACTIVITY_KEY="fengban_last_activity";
+const VISIT_SESSION_KEY="fengban_visit_counted_v1";
+const VISITOR_ID_KEY="fengban_visitor_id_v1";
 const DEFAULT_EXPIRY_HOURS:Record<Cat,number>={
   priest:12,
   party:12,
@@ -218,6 +220,8 @@ export default function Page(){
   const[sortMode,setSortMode]=useState<"newest"|"expiring"|"longest">("newest");
   const[now,setNow]=useState(()=>Date.now());
   const[toast,setToast]=useState("");
+  const[totalVisits,setTotalVisits]=useState<number|null>(null);
+  const[onlineCount,setOnlineCount]=useState<number|null>(null);
 
   useEffect(()=>{
     if(!supabase)return;
@@ -225,6 +229,67 @@ export default function Page(){
     const{data}=supabase.auth.onAuthStateChange((_e,s)=>setUser(s?.user??null));
     void refreshListings();
     return()=>data.subscription.unsubscribe();
+  },[]);
+
+  useEffect(()=>{
+    const client=supabase;
+    if(!client)return;
+
+    let active=true;
+
+    const loadVisitCount=async()=>{
+      const alreadyCounted=sessionStorage.getItem(VISIT_SESSION_KEY)==="1";
+      const rpcName=alreadyCounted
+        ?"get_fengban_visit_count"
+        :"record_fengban_visit";
+
+      const{data,error}=await client.rpc(rpcName);
+
+      if(!error&&active){
+        const value=Number(data??0);
+        if(Number.isFinite(value))setTotalVisits(value);
+        if(!alreadyCounted)sessionStorage.setItem(VISIT_SESSION_KEY,"1");
+      }
+    };
+
+    void loadVisitCount();
+
+    let visitorId=localStorage.getItem(VISITOR_ID_KEY);
+    if(!visitorId){
+      visitorId=typeof crypto!=="undefined"&&"randomUUID" in crypto
+        ?crypto.randomUUID()
+        :`visitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(VISITOR_ID_KEY,visitorId);
+    }
+
+    const channel=client.channel("fengban-online",{
+      config:{presence:{key:visitorId}}
+    });
+
+    const syncOnlineCount=()=>{
+      if(!active)return;
+      const state=channel.presenceState();
+      setOnlineCount(Object.keys(state).length);
+    };
+
+    channel
+      .on("presence",{event:"sync"},syncOnlineCount)
+      .on("presence",{event:"join"},syncOnlineCount)
+      .on("presence",{event:"leave"},syncOnlineCount)
+      .subscribe(async status=>{
+        if(status==="SUBSCRIBED"){
+          await channel.track({
+            online_at:new Date().toISOString()
+          });
+          syncOnlineCount();
+        }
+      });
+
+    return()=>{
+      active=false;
+      void channel.untrack();
+      void client.removeChannel(channel);
+    };
   },[]);
 
   useEffect(()=>{
@@ -974,6 +1039,31 @@ export default function Page(){
             <p>祭師、組隊任務、BOSS、公會、長期夥伴。資料會真正綁定會員帳號並由所有玩家共用。</p>
           </div>
         </section>
+
+        <div
+          className="panel"
+          style={{
+            marginTop:18,
+            display:"grid",
+            gridTemplateColumns:"repeat(2,minmax(0,1fr))",
+            gap:12,
+            textAlign:"center"
+          }}
+        >
+          <div>
+            <div className="muted" style={{fontSize:13}}>累積瀏覽</div>
+            <div style={{fontSize:22,fontWeight:900,marginTop:2}}>
+              {totalVisits===null?"—":totalVisits.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div className="muted" style={{fontSize:13}}>🟢 目前在線</div>
+            <div style={{fontSize:22,fontWeight:900,marginTop:2}}>
+              {onlineCount===null?"—":onlineCount.toLocaleString()}
+            </div>
+          </div>
+        </div>
+
         {listingsError&&
           <div className="panel" style={{marginTop:18}}>
             <b>目前無法載入最新刊登</b>
