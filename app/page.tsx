@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_BETA_POLISH_V11_20260906
+// FENGBAN_BETA_POLISH_V11_HOTFIX1_20260906
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -249,7 +249,8 @@ export default function Page(){
   },[]);
 
   useEffect(()=>{
-    if(!supabase||!user)return;
+    const client=supabase;
+    if(!client||!user)return;
 
     let timer:number|undefined;
 
@@ -263,7 +264,7 @@ export default function Page(){
     const logoutForInactivity=async()=>{
       clearTimer();
       localStorage.removeItem(LAST_ACTIVITY_KEY);
-      await supabase.auth.signOut();
+      await client.auth.signOut();
       setScreen("home");
       show("已超過 24 小時未使用，請重新登入");
     };
