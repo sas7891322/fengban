@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_COMMENTS_V16_20260907
+// FENGBAN_COMMENT_COUNTS_V17_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -232,6 +232,7 @@ export default function Page(){
   const[contactOpen,setContactOpen]=useState<Listing|null>(null);
   const[commentsOpen,setCommentsOpen]=useState<Listing|null>(null);
   const[comments,setComments]=useState<ListingComment[]>([]);
+  const[commentCounts,setCommentCounts]=useState<Record<string,number>>({});
   const[commentsLoading,setCommentsLoading]=useState(false);
   const[commentText,setCommentText]=useState("");
   const[email,setEmail]=useState("");
@@ -448,6 +449,7 @@ export default function Page(){
 
     setListings((data??[]) as Listing[]);
     setListingsLoading(false);
+    void refreshCommentCounts();
   }
 
   async function refreshCharacters(){
@@ -542,6 +544,20 @@ export default function Page(){
     setAdminCommentReports((data??[]) as AdminCommentReport[]);
   }
 
+  async function refreshCommentCounts(){
+    if(!supabase)return;
+
+    const{data,error}=await supabase.rpc("get_fengban_comment_counts");
+
+    if(error)return;
+
+    const next:Record<string,number>={};
+    for(const row of data??[]){
+      next[String(row.listing_id)]=Number(row.comment_count??0);
+    }
+    setCommentCounts(next);
+  }
+
   async function refreshComments(listingId:string){
     if(!supabase)return;
 
@@ -559,7 +575,12 @@ export default function Page(){
       return show(friendlyError(error.message));
     }
 
-    setComments((data??[]) as ListingComment[]);
+    const activeComments=(data??[]) as ListingComment[];
+    setComments(activeComments);
+    setCommentCounts(current=>({
+      ...current,
+      [listingId]:activeComments.length
+    }));
     setCommentsLoading(false);
   }
 
@@ -595,6 +616,7 @@ export default function Page(){
 
     setCommentText("");
     await refreshComments(commentsOpen.id);
+    void refreshCommentCounts();
     show("留言已送出");
   }
 
@@ -617,6 +639,7 @@ export default function Page(){
     if(error)return show(friendlyError(error.message));
 
     await refreshComments(commentsOpen.id);
+    void refreshCommentCounts();
     show("留言已刪除");
   }
 
@@ -684,6 +707,7 @@ export default function Page(){
     await refreshAdminCommentReports();
 
     if(commentsOpen)await refreshComments(commentsOpen.id);
+    void refreshCommentCounts();
     show("留言已隱藏並完成處置");
   }
 
@@ -1491,7 +1515,7 @@ export default function Page(){
                   :<button className="btn green" style={{marginTop:10}} onClick={()=>requireLogin(openNewListing)}>＋ 建立刊登</button>
                 }
               </div>
-              :<Grid items={filteredVisible} uid={user?.id} del={delListing} edit={openEditListing} renew={renewListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}} favoriteIds={favoriteIds} toggleFavorite={toggleFavorite} safety={(x)=>{if(!user){setAuthOpen(true);return;}setSafetyOpen(x)}} comments={openComments} now={now}/>
+              :<Grid items={filteredVisible} uid={user?.id} del={delListing} edit={openEditListing} renew={renewListing} contact={(x)=>{if(!user){setAuthOpen(true);return;}setContactOpen(x)}} favoriteIds={favoriteIds} toggleFavorite={toggleFavorite} safety={(x)=>{if(!user){setAuthOpen(true);return;}setSafetyOpen(x)}} comments={openComments} commentCounts={commentCounts} now={now}/>
         }
         </>}
       </main>
@@ -1633,7 +1657,7 @@ export default function Page(){
             <div className="empty">你還沒有任何刊登。</div>
             <button className="btn green" style={{marginTop:10}} onClick={openNewListing}>＋ 建立第一筆刊登</button>
           </div>
-          :<Grid items={mine} uid={user?.id} del={delListing} edit={openEditListing} renew={renewListing} contact={(x)=>setContactOpen(x)} favoriteIds={favoriteIds} toggleFavorite={toggleFavorite} safety={(x)=>{if(!user){setAuthOpen(true);return;}setSafetyOpen(x)}} comments={openComments} now={now}/>
+          :<Grid items={mine} uid={user?.id} del={delListing} edit={openEditListing} renew={renewListing} contact={(x)=>setContactOpen(x)} favoriteIds={favoriteIds} toggleFavorite={toggleFavorite} safety={(x)=>{if(!user){setAuthOpen(true);return;}setSafetyOpen(x)}} comments={openComments} commentCounts={commentCounts} now={now}/>
         }
       </main>
     </>}
@@ -1673,6 +1697,7 @@ export default function Page(){
             toggleFavorite={toggleFavorite}
             safety={(x)=>setSafetyOpen(x)}
             comments={openComments}
+            commentCounts={commentCounts}
             now={now}
           />
         }
@@ -2168,7 +2193,9 @@ export default function Page(){
         setComments([]);
         setCommentText("");
       }}>
-        <h2>留言｜{commentsOpen.title}</h2>
+        <h2>
+          留言（{commentCounts[commentsOpen.id]??0}）｜{commentsOpen.title}
+        </h2>
         <p className="muted">
           可以先公開詢問細節，確認適合後再交換聯絡方式。
         </p>
@@ -2381,7 +2408,7 @@ export default function Page(){
 }
 
 function Grid({
-  items,uid,del,edit,renew,contact,favoriteIds,toggleFavorite,safety,comments,now
+  items,uid,del,edit,renew,contact,favoriteIds,toggleFavorite,safety,comments,commentCounts,now
 }:{
   items:Listing[];
   uid?:string;
@@ -2393,6 +2420,7 @@ function Grid({
   toggleFavorite:(x:Listing)=>void;
   safety:(x:Listing)=>void;
   comments:(x:Listing)=>void;
+  commentCounts:Record<string,number>;
   now:number
 }){
   if(!items.length)return <div className="empty big">目前還沒有刊登。</div>;
@@ -2462,12 +2490,16 @@ function Grid({
 
         <div className="cardActions" style={{gap:8}}>
           {own?<>
-            <button className="btn soft" onClick={()=>comments(x)}>💬 留言</button>
+            <button className="btn soft" onClick={()=>comments(x)}>
+              💬 留言（{commentCounts[x.id]??0}）
+            </button>
             <button className="btn soft" onClick={()=>edit(x)}>編輯</button>
             <button className="btn green" onClick={()=>renew(x)}>{isExpired?"續刊":"延長"}</button>
             <button className="btn danger" onClick={()=>del(x.id)}>刪除</button>
           </>:<>
-            <button className="btn soft" onClick={()=>comments(x)}>💬 留言</button>
+            <button className="btn soft" onClick={()=>comments(x)}>
+              💬 留言（{commentCounts[x.id]??0}）
+            </button>
             <button
               className="btn soft"
               onClick={()=>toggleFavorite(x)}
