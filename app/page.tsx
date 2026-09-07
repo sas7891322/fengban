@@ -1,5 +1,5 @@
 "use client";
-// FENGBAN_TRAFFIC_V14_20260907
+// FENGBAN_BRAND_ICON_V15_20260907
 import {FormEvent,useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -1010,7 +1010,23 @@ export default function Page(){
     <header className="topbar">
       <div className="nav">
         <div className="brand">
-          {back?<button className="back" onClick={back}>‹</button>:<span className="mark">楓</span>}
+          {back
+            ?<button className="back" onClick={back}>‹</button>
+            :<img
+              src="/fengban-icon.png"
+              alt="楓伴"
+              width={36}
+              height={36}
+              style={{
+                width:36,
+                height:36,
+                borderRadius:10,
+                objectFit:"cover",
+                display:"block",
+                boxShadow:"0 4px 14px rgba(123,76,31,.14)"
+              }}
+            />
+          }
           {title}
         </div>
         <div className="navActions">
