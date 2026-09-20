@@ -1,51 +1,31 @@
-# 楓伴 BOSS 王計時 v1 安裝
+# 楓伴 BOSS 王計時 v2（全點選版）
 
-目前 GitHub App 對 `sas7891322/fengban` 的寫入被 GitHub 回覆 403，因此這份資料夾是可直接合併進目前專案的版本。
+這版把新增計時改成手機友善的「全按鈕點選」流程，不需要輸入文字，也不需要下拉選單。
 
-## 1. 複製檔案
+## 操作流程
 
-把以下檔案放進 repo 相同路徑：
+1. 點 BOSS：紅寶王／樹妖王／殭屍猴王／巨居蟹／蘑菇王／沼澤巨鱷／殭屍蘑菇王／巴洛古
+2. 點伺服器：菇菇寶貝／雪吉拉
+3. 點頻道：CH1～CH60
+4. 點重生規則：30、45、60、90 分、2 小時、3 小時、45～90 分、3～4 小時
+5. 點擊殺時間：剛剛／5／10／15／30 分前
+6. 點「開始／更新這隻王的計時」
 
-- `app/boss-timer/page.tsx`（新增）
-- `app/BossTimerShortcut.tsx`（新增）
-- `app/layout.tsx`（覆蓋目前 layout；只多了王計時入口）
-- `supabase/fengban_v18_boss_timers.sql`（新增）
+目前不把各王重生規則直接寫死，因為經典版社群回報仍有版本差異；等確認各隻王的固定重生時間後，可以再改成「點 BOSS 後自動帶入」，屆時甚至能省掉第 4 步。
 
-## 2. 初始化 Supabase
+## 安裝
 
-進 Supabase → SQL Editor，完整執行：
+把檔案合併進既有 `fengban` 專案：
+
+- `app/boss-timer/page.tsx`
+- `app/BossTimerShortcut.tsx`
+- `app/layout.tsx`
+- `supabase/fengban_v18_boss_timers.sql`
+
+如果 v1 的 SQL 已執行過，不需要重跑資料表 SQL；v2 只改前端操作方式。
+
+第一次安裝才需要到 Supabase SQL Editor 執行：
 
 `supabase/fengban_v18_boss_timers.sql`
 
-這會建立：
-
-- `boss_timers` 共用資料表
-- RLS 權限
-- 同伺服器＋BOSS＋頻道唯一限制
-- Realtime 即時更新
-
-## 3. 部署
-
-提交到 GitHub 後讓 Vercel 正常重新部署即可。
-
-## v1 功能
-
-- 訪客可查看所有王計時
-- 登入會員可新增／更新計時
-- 同一伺服器＋BOSS＋頻道共用同一筆計時
-- 支援固定重生（最早＝最晚）
-- 支援區間重生（最早＜最晚）
-- 「剛剛擊殺」一鍵重新開始倒數
-- 即時顯示倒數、重生區間、可能已重生
-- Supabase Realtime + 30 秒備援刷新
-- 建立者可刪除自己建立的計時
-- 手機版可用
-
-## 後續可加
-
-- 官方／社群確認過的王重生時間預設值
-- 王圖示與地圖圖示
-- 剩 5 分鐘瀏覽器通知
-- Discord 通知
-- 擊殺歷史紀錄
-- 依頻道快速巡王模式
+之後重新部署 Vercel 即可。
