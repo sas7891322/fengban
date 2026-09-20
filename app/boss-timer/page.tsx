@@ -4,75 +4,72 @@ import {useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
 
-type BossTimer={
-  id:string;
-  server:string;
+type BossDefinition={
+  boss_key:string;
   boss_name:string;
-  map_name:string;
-  channel:number;
+  short_name:string;
+  icon:string;
   respawn_min_minutes:number;
   respawn_max_minutes:number;
+  source_type:string;
+  source_note:string;
+  sort_order:number;
+  is_active:boolean;
+};
+
+type BossTimerState={
+  id:string;
+  server:string;
+  boss_key:string;
+  channel:number;
   defeated_at:string;
-  notes:string;
-  created_by:string;
-  updated_by:string;
-  created_at:string;
+  event_id:string;
   updated_at:string;
 };
 
-type TimerPhase={
-  key:"countdown"|"window"|"ready";
-  label:string;
-  start:number;
-  end:number;
+type BossKillEvent={
+  id:string;
+  server:string;
+  boss_key:string;
+  channel:number;
+  defeated_at:string;
+  interval_seconds:number|null;
+  created_at:string;
 };
 
-type BossPreset={
-  name:string;
-  short:string;
-  icon:string;
+type BossKillConfirmation={
+  event_id:string;
+  user_id:string;
+  reported_at:string;
 };
 
-type RespawnPreset={
-  label:string;
-  min:number;
-  max:number;
+type TimerPhase="countdown"|"window"|"ready";
+
+type AdminBossStat={
+  boss:BossDefinition;
+  events:number;
+  intervals:number[];
+  uniquePlayers:number;
+  min:number|null;
+  p10:number|null;
+  median:number|null;
+  p90:number|null;
+  average:number|null;
+  histogram:Array<{label:string;count:number}>;
 };
 
-const gameServers=["菇菇寶貝","雪吉拉"] as const;
-
-// 目前經典版常見隱藏／野外 BOSS。重生規則不硬寫死，避免版本變動造成誤導。
-const bossPresets:BossPreset[]=[
-  {name:"紅寶王",short:"紅寶",icon:"🔴"},
-  {name:"樹妖王",short:"樹妖",icon:"🌳"},
-  {name:"殭屍猴王",short:"猴王",icon:"🐒"},
-  {name:"巨居蟹",short:"巨蟹",icon:"🦀"},
-  {name:"蘑菇王",short:"蘑菇",icon:"🍄"},
-  {name:"沼澤巨鱷",short:"巨鱷",icon:"🐊"},
-  {name:"殭屍蘑菇王",short:"殭屍菇王",icon:"☠️"},
-  {name:"巴洛古",short:"巴洛古",icon:"👹"}
-];
-
-const respawnPresets:RespawnPreset[]=[
-  {label:"30 分",min:30,max:30},
-  {label:"45 分",min:45,max:45},
-  {label:"60 分",min:60,max:60},
-  {label:"90 分",min:90,max:90},
-  {label:"2 小時",min:120,max:120},
-  {label:"3 小時",min:180,max:180},
-  {label:"45～90 分",min:45,max:90},
-  {label:"3～4 小時",min:180,max:240}
-];
-
-const defeatedOffsets=[
-  {label:"剛剛",minutes:0},
-  {label:"5 分前",minutes:5},
-  {label:"10 分前",minutes:10},
-  {label:"15 分前",minutes:15},
-  {label:"30 分前",minutes:30}
-] as const;
-
+const ACTIVE_SERVER="菇菇寶貝";
 const channels=Array.from({length:60},(_,i)=>i+1);
+
+function minutesLabel(min:number,max:number){
+  const pretty=(value:number)=>{
+    if(value<60)return `${value} 分`;
+    const h=Math.floor(value/60);
+    const m=value%60;
+    return m?`${h} 小時 ${m} 分`:`${h} 小時`;
+  };
+  return min===max?pretty(min):`${pretty(min)}～${pretty(max)}`;
+}
 
 function formatDateTime(value:string|number){
   return new Date(value).toLocaleString("zh-TW",{
@@ -80,259 +77,322 @@ function formatDateTime(value:string|number){
     day:"2-digit",
     hour:"2-digit",
     minute:"2-digit",
+    second:"2-digit",
     hour12:false
   });
 }
 
 function countdown(ms:number){
   const total=Math.max(0,Math.floor(ms/1000));
-  const days=Math.floor(total/86400);
-  const hours=Math.floor((total%86400)/3600);
+  const hours=Math.floor(total/3600);
   const minutes=Math.floor((total%3600)/60);
   const seconds=total%60;
-  const hh=String(hours).padStart(2,"0");
-  const mm=String(minutes).padStart(2,"0");
-  const ss=String(seconds).padStart(2,"0");
-  return days>0?`${days}天 ${hh}:${mm}:${ss}`:`${hh}:${mm}:${ss}`;
+  return `${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(seconds).padStart(2,"0")}`;
 }
 
-function phaseOf(timer:BossTimer,now:number):TimerPhase{
-  const defeated=new Date(timer.defeated_at).getTime();
-  const start=defeated+timer.respawn_min_minutes*60_000;
-  const end=defeated+timer.respawn_max_minutes*60_000;
-
-  if(now<start){
-    return {
-      key:"countdown",
-      label:timer.respawn_min_minutes===timer.respawn_max_minutes?"倒數中":"等待重生區間",
-      start,
-      end
-    };
-  }
-
-  if(timer.respawn_max_minutes>timer.respawn_min_minutes&&now<=end){
-    return {key:"window",label:"已進入重生區間",start,end};
-  }
-
-  return {key:"ready",label:"可能已重生",start,end};
+function phaseOf(timer:BossTimerState,boss:BossDefinition,now:number){
+  const killed=new Date(timer.defeated_at).getTime();
+  const start=killed+boss.respawn_min_minutes*60_000;
+  const end=killed+boss.respawn_max_minutes*60_000;
+  const phase:TimerPhase=now<start?"countdown":now<=end&&end>start?"window":"ready";
+  return {phase,start,end};
 }
 
-function ChoiceButton({active,children,onClick,wide=false}:{active:boolean;children:React.ReactNode;onClick:()=>void;wide?:boolean}){
+function quantile(sorted:number[],q:number){
+  if(sorted.length===0)return null;
+  if(sorted.length===1)return sorted[0];
+  const pos=(sorted.length-1)*q;
+  const base=Math.floor(pos);
+  const rest=pos-base;
+  const next=sorted[base+1];
+  return next===undefined?sorted[base]:sorted[base]+rest*(next-sorted[base]);
+}
+
+function roundedMinute(seconds:number|null){
+  if(seconds===null)return null;
+  return Math.round(seconds/60);
+}
+
+function validIntervalsForBoss(events:BossKillEvent[],boss:BossDefinition){
+  const minSeconds=15*60;
+  const maxMinutes=Math.max(180,Math.ceil(boss.respawn_max_minutes*1.75));
+  const maxSeconds=maxMinutes*60;
+  return events
+    .filter(event=>event.boss_key===boss.boss_key&&event.interval_seconds!==null)
+    .map(event=>Number(event.interval_seconds))
+    .filter(value=>Number.isFinite(value)&&value>=minSeconds&&value<=maxSeconds)
+    .sort((a,b)=>a-b);
+}
+
+function histogram5m(intervals:number[]){
+  if(intervals.length===0)return [];
+  const mins=intervals.map(seconds=>seconds/60);
+  const floor=Math.floor(Math.min(...mins)/5)*5;
+  const ceil=Math.ceil(Math.max(...mins)/5)*5;
+  const rows:Array<{label:string;count:number}>=[];
+  for(let start=floor;start<ceil;start+=5){
+    const end=start+5;
+    const count=mins.filter(value=>value>=start&&(value<end||(end===ceil&&value<=end))).length;
+    if(count>0)rows.push({label:`${start}～${end} 分`,count});
+  }
+  return rows;
+}
+
+function ChoiceButton({active,children,onClick,disabled=false}:{active:boolean;children:React.ReactNode;onClick:()=>void;disabled?:boolean}){
   return <button
     type="button"
+    disabled={disabled}
     onClick={onClick}
     style={{
       border:active?"2px solid #6d8f3f":"1px solid #e4d9c8",
       background:active?"#eef5e4":"#fffdf9",
       color:"#38271c",
       borderRadius:14,
-      padding:wide?"13px 14px":"11px 10px",
+      padding:"11px 10px",
       fontWeight:900,
-      boxShadow:active?"0 5px 16px rgba(109,143,63,.16)":"none",
-      minHeight:44
+      minHeight:44,
+      opacity:disabled?.55:1,
+      boxShadow:active?"0 5px 16px rgba(109,143,63,.16)":"none"
     }}
   >{children}</button>;
 }
 
 export default function BossTimerPage(){
   const[user,setUser]=useState<User|null>(null);
-  const[timers,setTimers]=useState<BossTimer[]>([]);
-  const[loading,setLoading]=useState(supabaseConfigured);
-  const[error,setError]=useState("");
-  const[message,setMessage]=useState("");
-  const[saving,setSaving]=useState(false);
-  const[now,setNow]=useState(()=>Date.now());
-
-  const[selectedBoss,setSelectedBoss]=useState(bossPresets[6].name);
-  const[selectedServer,setSelectedServer]=useState<(typeof gameServers)[number]>("菇菇寶貝");
+  const[isAdmin,setIsAdmin]=useState(false);
+  const[bosses,setBosses]=useState<BossDefinition[]>([]);
+  const[timers,setTimers]=useState<BossTimerState[]>([]);
+  const[selectedBossKey,setSelectedBossKey]=useState("");
   const[selectedChannel,setSelectedChannel]=useState<number|null>(null);
-  const[selectedRespawn,setSelectedRespawn]=useState<RespawnPreset|null>(null);
-  const[selectedOffset,setSelectedOffset]=useState(0);
-
-  const[serverFilter,setServerFilter]=useState<"all"|(typeof gameServers)[number]>("all");
-  const[phaseFilter,setPhaseFilter]=useState<"all"|TimerPhase["key"]>("all");
-  const[bossFilter,setBossFilter]=useState<string>("all");
+  const[loading,setLoading]=useState(supabaseConfigured);
+  const[saving,setSaving]=useState(false);
+  const[message,setMessage]=useState("");
+  const[error,setError]=useState("");
+  const[now,setNow]=useState(()=>Date.now());
+  const[showAdmin,setShowAdmin]=useState(false);
+  const[adminLoading,setAdminLoading]=useState(false);
+  const[adminEvents,setAdminEvents]=useState<BossKillEvent[]>([]);
+  const[adminConfirmations,setAdminConfirmations]=useState<BossKillConfirmation[]>([]);
 
   const flash=(text:string)=>{
     setMessage(text);
-    window.setTimeout(()=>setMessage(""),2200);
+    window.setTimeout(()=>setMessage(""),2400);
   };
 
-  const loadTimers=async()=>{
+  const selectedBoss=useMemo(
+    ()=>bosses.find(boss=>boss.boss_key===selectedBossKey)??null,
+    [bosses,selectedBossKey]
+  );
+
+  const bossMap=useMemo(
+    ()=>Object.fromEntries(bosses.map(boss=>[boss.boss_key,boss])) as Record<string,BossDefinition>,
+    [bosses]
+  );
+
+  async function loadPublicData(){
     const client=supabase;
     if(!client)return;
-
     setLoading(true);
-    const{data,error:loadError}=await client
-      .from("boss_timers")
-      .select("id,server,boss_name,map_name,channel,respawn_min_minutes,respawn_max_minutes,defeated_at,notes,created_by,updated_by,created_at,updated_at")
-      .order("defeated_at",{ascending:false});
+    const[bossResult,timerResult]=await Promise.all([
+      client.from("boss_definitions")
+        .select("boss_key,boss_name,short_name,icon,respawn_min_minutes,respawn_max_minutes,source_type,source_note,sort_order,is_active")
+        .eq("is_active",true)
+        .order("sort_order"),
+      client.from("boss_timer_state")
+        .select("id,server,boss_key,channel,defeated_at,event_id,updated_at")
+        .eq("server",ACTIVE_SERVER)
+        .order("updated_at",{ascending:false})
+    ]);
 
-    if(loadError){
-      const missingTable=loadError.code==="42P01"||loadError.message.toLowerCase().includes("boss_timers");
-      setError(missingTable
-        ?"BOSS 計時資料表尚未初始化，請先執行 supabase/fengban_v18_boss_timers.sql。"
-        :loadError.message
-      );
+    if(bossResult.error||timerResult.error){
+      const issue=bossResult.error??timerResult.error;
+      setError(issue?.message??"王計時資料載入失敗");
       setLoading(false);
       return;
     }
 
+    const loadedBosses=(bossResult.data??[]) as BossDefinition[];
+    setBosses(loadedBosses);
+    setTimers((timerResult.data??[]) as BossTimerState[]);
+    setSelectedBossKey(current=>current||loadedBosses[0]?.boss_key||"");
     setError("");
-    setTimers((data??[]) as BossTimer[]);
     setLoading(false);
-  };
+  }
+
+  async function loadAdminStatus(currentUser:User|null){
+    const client=supabase;
+    if(!client||!currentUser){
+      setIsAdmin(false);
+      return;
+    }
+    const{data,error:adminError}=await client
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id",currentUser.id)
+      .maybeSingle();
+    setIsAdmin(!adminError&&Boolean(data));
+  }
+
+  async function loadAdminData(){
+    const client=supabase;
+    if(!client||!isAdmin)return;
+    setAdminLoading(true);
+    const[eventResult,confirmationResult]=await Promise.all([
+      client.from("boss_kill_events")
+        .select("id,server,boss_key,channel,defeated_at,interval_seconds,created_at")
+        .eq("server",ACTIVE_SERVER)
+        .order("defeated_at",{ascending:false})
+        .limit(3000),
+      client.from("boss_kill_confirmations")
+        .select("event_id,user_id,reported_at")
+        .order("reported_at",{ascending:false})
+        .limit(6000)
+    ]);
+
+    if(eventResult.error||confirmationResult.error){
+      flash(eventResult.error?.message??confirmationResult.error?.message??"統計資料載入失敗");
+      setAdminLoading(false);
+      return;
+    }
+
+    setAdminEvents((eventResult.data??[]) as BossKillEvent[]);
+    setAdminConfirmations((confirmationResult.data??[]) as BossKillConfirmation[]);
+    setAdminLoading(false);
+  }
 
   useEffect(()=>{
     const client=supabase;
     if(!client)return;
 
-    void client.auth.getUser().then(({data})=>setUser(data.user??null));
-    const{data:auth}=client.auth.onAuthStateChange((_event,session)=>setUser(session?.user??null));
-    void loadTimers();
+    void client.auth.getUser().then(({data})=>{
+      const current=data.user??null;
+      setUser(current);
+      void loadAdminStatus(current);
+    });
+
+    const{data:auth}=client.auth.onAuthStateChange((_event,session)=>{
+      const current=session?.user??null;
+      setUser(current);
+      void loadAdminStatus(current);
+    });
+
+    void loadPublicData();
 
     const realtime=client
-      .channel("fengban-boss-timers")
-      .on("postgres_changes",{event:"*",schema:"public",table:"boss_timers"},()=>void loadTimers())
+      .channel("fengban-boss-timer-state-v3")
+      .on("postgres_changes",{event:"*",schema:"public",table:"boss_timer_state"},()=>void loadPublicData())
       .subscribe();
-
-    const poll=window.setInterval(()=>void loadTimers(),30_000);
 
     return()=>{
       auth.subscription.unsubscribe();
-      window.clearInterval(poll);
       void client.removeChannel(realtime);
     };
   },[]);
 
   useEffect(()=>{
-    const tick=window.setInterval(()=>setNow(Date.now()),1000);
-    return()=>window.clearInterval(tick);
+    const timer=window.setInterval(()=>setNow(Date.now()),1000);
+    return()=>window.clearInterval(timer);
   },[]);
 
-  const filteredTimers=useMemo(()=>{
-    const rows=timers.filter(timer=>{
-      const phase=phaseOf(timer,now);
-      if(serverFilter!=="all"&&timer.server!==serverFilter)return false;
-      if(phaseFilter!=="all"&&phase.key!==phaseFilter)return false;
-      if(bossFilter!=="all"&&timer.boss_name!==bossFilter)return false;
-      return true;
-    });
+  useEffect(()=>{
+    if(showAdmin&&isAdmin)void loadAdminData();
+  },[showAdmin,isAdmin]);
 
-    return rows.sort((a,b)=>{
-      const pa=phaseOf(a,now);
-      const pb=phaseOf(b,now);
-      const rank=(p:TimerPhase)=>p.key==="window"?0:p.key==="ready"?1:2;
-      const r=rank(pa)-rank(pb);
-      if(r!==0)return r;
-      if(pa.key==="countdown"&&pb.key==="countdown")return pa.start-pb.start;
+  const sortedTimers=useMemo(()=>{
+    return [...timers].sort((a,b)=>{
+      const bossA=bossMap[a.boss_key];
+      const bossB=bossMap[b.boss_key];
+      if(!bossA||!bossB)return 0;
+      const phaseRank=(timer:BossTimerState,boss:BossDefinition)=>{
+        const {phase}=phaseOf(timer,boss,now);
+        return phase==="window"?0:phase==="ready"?1:2;
+      };
+      const rank=phaseRank(a,bossA)-phaseRank(b,bossB);
+      if(rank!==0)return rank;
       return new Date(b.updated_at).getTime()-new Date(a.updated_at).getTime();
     });
-  },[timers,serverFilter,phaseFilter,bossFilter,now]);
+  },[timers,bossMap,now]);
 
-  const activeWindowCount=useMemo(
-    ()=>timers.filter(timer=>phaseOf(timer,now).key==="window").length,
-    [timers,now]
-  );
+  const adminStats=useMemo<AdminBossStat[]>(()=>{
+    if(!isAdmin)return [];
+    const eventIdsByBoss=new Map<string,Set<string>>();
+    for(const event of adminEvents){
+      if(!eventIdsByBoss.has(event.boss_key))eventIdsByBoss.set(event.boss_key,new Set());
+      eventIdsByBoss.get(event.boss_key)!.add(event.id);
+    }
 
-  const readyCount=useMemo(
-    ()=>timers.filter(timer=>phaseOf(timer,now).key==="ready").length,
-    [timers,now]
-  );
+    return bosses.map(boss=>{
+      const bossEvents=adminEvents.filter(event=>event.boss_key===boss.boss_key);
+      const intervals=validIntervalsForBoss(bossEvents,boss);
+      const relatedEventIds=eventIdsByBoss.get(boss.boss_key)??new Set<string>();
+      const uniquePlayers=new Set(
+        adminConfirmations
+          .filter(row=>relatedEventIds.has(row.event_id))
+          .map(row=>row.user_id)
+      ).size;
+      const average=intervals.length?intervals.reduce((sum,value)=>sum+value,0)/intervals.length:null;
+      return {
+        boss,
+        events:bossEvents.length,
+        intervals,
+        uniquePlayers,
+        min:roundedMinute(intervals[0]??null),
+        p10:roundedMinute(quantile(intervals,.10)),
+        median:roundedMinute(quantile(intervals,.50)),
+        p90:roundedMinute(quantile(intervals,.90)),
+        average:roundedMinute(average),
+        histogram:histogram5m(intervals)
+      };
+    });
+  },[isAdmin,bosses,adminEvents,adminConfirmations]);
 
-  const nextTimer=useMemo(()=>{
-    return timers
-      .map(timer=>({timer,phase:phaseOf(timer,now)}))
-      .filter(item=>item.phase.key==="countdown")
-      .sort((a,b)=>a.phase.start-b.phase.start)[0]??null;
-  },[timers,now]);
-
-  async function startTimer(){
+  async function reportDefeated(){
     const client=supabase;
     if(!client)return flash("尚未連接 Supabase");
-    if(!user)return flash("請先回首頁登入會員");
-    if(!selectedBoss)return flash("請先點選 BOSS");
-    if(!selectedChannel)return flash("請先點選頻道");
-    if(!selectedRespawn)return flash("請先點選重生規則");
+    if(!user)return flash("請先回楓伴首頁登入");
+    if(!selectedBoss)return flash("請先選王");
+    if(!selectedChannel)return flash("請先選頻道");
 
-    const defeatedAt=new Date(Date.now()-selectedOffset*60_000);
     setSaving(true);
-
-    const{data:existing,error:lookupError}=await client
-      .from("boss_timers")
-      .select("id")
-      .eq("server",selectedServer)
-      .eq("boss_name",selectedBoss)
-      .eq("channel",selectedChannel)
-      .maybeSingle();
-
-    if(lookupError){
-      setSaving(false);
-      return flash(lookupError.message);
-    }
-
-    const payload={
-      server:selectedServer,
-      boss_name:selectedBoss,
-      map_name:"",
-      channel:selectedChannel,
-      respawn_min_minutes:selectedRespawn.min,
-      respawn_max_minutes:selectedRespawn.max,
-      defeated_at:defeatedAt.toISOString(),
-      notes:"",
-      updated_by:user.id
-    };
-
-    const result=existing
-      ?await client.from("boss_timers").update(payload).eq("id",existing.id)
-      :await client.from("boss_timers").insert({...payload,created_by:user.id});
-
+    const{data,error:rpcError}=await client.rpc("record_boss_kill",{
+      p_server:ACTIVE_SERVER,
+      p_boss_key:selectedBoss.boss_key,
+      p_channel:selectedChannel
+    });
     setSaving(false);
-    if(result.error)return flash(result.error.message);
 
-    await loadTimers();
-    flash(existing?"計時已更新":"已開始新的王計時");
+    if(rpcError)return flash(rpcError.message);
+
+    const row=Array.isArray(data)?data[0]:data;
+    await loadPublicData();
+    if(showAdmin&&isAdmin)void loadAdminData();
+
+    if(row?.was_duplicate){
+      flash(`已合併到 ${selectedBoss.short_name} CH${selectedChannel} 的同一輪擊殺`);
+    }else{
+      flash(`${selectedBoss.short_name} CH${selectedChannel} 已開始倒數`);
+    }
   }
 
-  async function markDefeatedNow(timer:BossTimer){
-    const client=supabase;
-    if(!client)return;
-    if(!user)return flash("請先回首頁登入會員");
-
-    const{error:updateError}=await client
-      .from("boss_timers")
-      .update({defeated_at:new Date().toISOString(),updated_by:user.id})
-      .eq("id",timer.id);
-
-    if(updateError)return flash(updateError.message);
-    await loadTimers();
-    flash(`${timer.boss_name} CH${timer.channel} 已重新開始計時`);
-  }
-
-  async function deleteTimer(timer:BossTimer){
-    const client=supabase;
-    if(!client||!user)return;
-    if(timer.created_by!==user.id)return flash("只有建立者能刪除這筆計時");
-    if(!window.confirm(`確定刪除 ${timer.boss_name} CH${timer.channel} 的計時嗎？`))return;
-
-    const{error:deleteError}=await client.from("boss_timers").delete().eq("id",timer.id);
-    if(deleteError)return flash(deleteError.message);
-    await loadTimers();
-    flash("計時已刪除");
-  }
+  const activeCount=timers.length;
+  const windowCount=timers.filter(timer=>{
+    const boss=bossMap[timer.boss_key];
+    return boss&&phaseOf(timer,boss,now).phase==="window";
+  }).length;
 
   return <>
-    {!supabaseConfigured&&
-      <div className="setup">尚未連接 Supabase，BOSS 計時暫時無法使用。</div>
-    }
+    {!supabaseConfigured&&<div className="setup">尚未連接 Supabase，王計時暫時無法使用。</div>}
 
     <header className="topbar">
       <div className="nav">
         <div className="brand">
           <a className="back" href="/" aria-label="回楓伴首頁" style={{display:"grid",placeItems:"center",textDecoration:"none"}}>‹</a>
-          👑 BOSS 王計時
+          👑 王計時
         </div>
         <div className="navActions">
+          {isAdmin&&<button className={showAdmin?"btn green":"btn soft"} onClick={()=>setShowAdmin(value=>!value)}>
+            📊 官方統計
+          </button>}
           <a className="btn soft" href="/" style={{textDecoration:"none"}}>回首頁</a>
         </div>
       </div>
@@ -340,203 +400,183 @@ export default function BossTimerPage(){
 
     <main className="wrap">
       <section className="plain">
-        <span className="kicker">MAPLESTORY CLASSIC｜ONE-TAP BOSS TIMER</span>
-        <h1>經典版王計時</h1>
-        <p>不用打字、不用下拉。點王、點伺服器、點頻道、點擊殺時間，就能開始倒數。</p>
+        <span className="kicker">MAPLESTORY CLASSIC｜COMMUNITY BOSS TIMER</span>
+        <h1>選王、選頻道、按擊殺。</h1>
+        <p>玩家不需要回報「王已重生」。每次王被打死只按一次，楓伴會自動累積同王同頻道的擊殺間隔，讓官方帳號慢慢看出真正的重生分布。</p>
       </section>
 
-      <div className="panel" style={{marginTop:18,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,textAlign:"center"}}>
-        <div>
-          <div className="muted" style={{fontSize:13}}>目前追蹤</div>
-          <div style={{fontSize:24,fontWeight:900,marginTop:3}}>{timers.length}</div>
-        </div>
-        <div>
-          <div className="muted" style={{fontSize:13}}>🔥 重生區間中</div>
-          <div style={{fontSize:24,fontWeight:900,marginTop:3}}>{activeWindowCount}</div>
-        </div>
-        <div>
-          <div className="muted" style={{fontSize:13}}>✅ 可能已重生</div>
-          <div style={{fontSize:24,fontWeight:900,marginTop:3}}>{readyCount}</div>
-        </div>
-        <div>
-          <div className="muted" style={{fontSize:13}}>下一隻</div>
-          <div style={{fontSize:16,fontWeight:900,marginTop:6}}>
-            {nextTimer?`${nextTimer.timer.boss_name} CH${nextTimer.timer.channel}`:"—"}
-          </div>
-        </div>
+      <div className="panel" style={{marginTop:18,display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10,textAlign:"center"}}>
+        <div><div className="muted">測試伺服器</div><div style={{fontWeight:950,fontSize:18,marginTop:4}}>{ACTIVE_SERVER}</div></div>
+        <div><div className="muted">目前追蹤</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{activeCount}</div></div>
+        <div><div className="muted">🔥 重生區間</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{windowCount}</div></div>
       </div>
 
-      {error&&
-        <div className="panel" style={{marginTop:18}}>
-          <b>王計時目前無法載入</b>
-          <div className="muted" style={{marginTop:6}}>{error}</div>
-          <button className="btn soft" style={{marginTop:10}} onClick={()=>void loadTimers()}>重新載入</button>
-        </div>
-      }
+      {error&&<div className="panel" style={{marginTop:18}}>
+        <b>目前無法載入王計時</b>
+        <div className="muted" style={{marginTop:5}}>{error}</div>
+        <button className="btn soft" style={{marginTop:10}} onClick={()=>void loadPublicData()}>重新載入</button>
+      </div>}
 
-      <div className="sectionTitle">
-        <h2>快速開始計時</h2>
-        <p>照 1 → 5 點選即可。</p>
-      </div>
-
-      <div className="panel">
-        {!user&&
-          <div style={{marginBottom:14,padding:12,borderRadius:12,background:"rgba(118,80,160,.08)"}}>
+      {!showAdmin&&<>
+        <div className="sectionTitle"><h2>開始計時</h2><p>只有三步，全部用點的。</p></div>
+        <div className="panel">
+          {!user&&<div style={{padding:12,borderRadius:12,background:"rgba(118,80,160,.08)",marginBottom:16}}>
             <b>目前是訪客模式</b>
-            <div className="muted" style={{marginTop:4}}>可以查看所有計時；新增與重置需要先回楓伴首頁登入。</div>
-          </div>
-        }
+            <div className="muted" style={{marginTop:4}}>可以看計時；要回報王已消滅，需要先登入楓伴。</div>
+          </div>}
 
-        <div style={{fontWeight:950,marginBottom:9}}>1．點選 BOSS</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(116px,1fr))",gap:8}}>
-          {bossPresets.map(boss=><ChoiceButton
-            key={boss.name}
-            active={selectedBoss===boss.name}
-            onClick={()=>setSelectedBoss(boss.name)}
-            wide
+          <div style={{fontWeight:950,marginBottom:9}}>1．選王</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(108px,1fr))",gap:8}}>
+            {bosses.map(boss=><ChoiceButton
+              key={boss.boss_key}
+              active={selectedBossKey===boss.boss_key}
+              onClick={()=>{
+                setSelectedBossKey(boss.boss_key);
+                setSelectedChannel(null);
+              }}
+            >
+              <div style={{fontSize:23}}>{boss.icon}</div>
+              <div style={{marginTop:3}}>{boss.short_name}</div>
+              <div className="muted" style={{marginTop:3}}>{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}</div>
+            </ChoiceButton>)}
+          </div>
+
+          <div style={{fontWeight:950,margin:"20px 0 9px"}}>2．選頻道</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(54px,1fr))",gap:6}}>
+            {channels.map(channel=><ChoiceButton
+              key={channel}
+              active={selectedChannel===channel}
+              onClick={()=>setSelectedChannel(channel)}
+            >CH{channel}</ChoiceButton>)}
+          </div>
+
+          <div style={{marginTop:18,padding:14,border:"1px solid #eadfce",borderRadius:14,background:"#faf7f1"}}>
+            <div className="muted">目前選擇</div>
+            <div style={{fontWeight:950,fontSize:18,marginTop:4}}>
+              {selectedBoss?.boss_name??"尚未選王"}｜{selectedChannel?`CH${selectedChannel}`:"尚未選頻道"}
+            </div>
+            {selectedBoss&&<div className="muted" style={{marginTop:4}}>
+              目前參考重生：{minutesLabel(selectedBoss.respawn_min_minutes,selectedBoss.respawn_max_minutes)}
+            </div>}
+          </div>
+
+          <button
+            type="button"
+            className="btn green"
+            disabled={saving||!user||!selectedBoss||!selectedChannel}
+            onClick={()=>void reportDefeated()}
+            style={{width:"100%",marginTop:12,padding:"16px",fontSize:18}}
           >
-            <div style={{fontSize:22}}>{boss.icon}</div>
-            <div style={{marginTop:3}}>{boss.short}</div>
-          </ChoiceButton>)}
-        </div>
-
-        <div style={{fontWeight:950,margin:"20px 0 9px"}}>2．點選伺服器</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
-          {gameServers.map(server=><ChoiceButton
-            key={server}
-            active={selectedServer===server}
-            onClick={()=>setSelectedServer(server)}
-            wide
-          >{server}</ChoiceButton>)}
-        </div>
-
-        <div style={{fontWeight:950,margin:"20px 0 9px"}}>3．點選頻道</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(52px,1fr))",gap:6}}>
-          {channels.map(channel=><ChoiceButton
-            key={channel}
-            active={selectedChannel===channel}
-            onClick={()=>setSelectedChannel(channel)}
-          >CH{channel}</ChoiceButton>)}
-        </div>
-
-        <div style={{fontWeight:950,margin:"20px 0 9px"}}>4．點選重生規則</div>
-        <div className="muted" style={{marginBottom:8}}>目前先由玩家直接點選規則，避免把尚未完全確認的王重生時間寫死。</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(105px,1fr))",gap:8}}>
-          {respawnPresets.map(rule=><ChoiceButton
-            key={`${rule.min}-${rule.max}`}
-            active={selectedRespawn?.min===rule.min&&selectedRespawn?.max===rule.max}
-            onClick={()=>setSelectedRespawn(rule)}
-          >{rule.label}</ChoiceButton>)}
-        </div>
-
-        <div style={{fontWeight:950,margin:"20px 0 9px"}}>5．王什麼時候被打死？</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",gap:8}}>
-          {defeatedOffsets.map(offset=><ChoiceButton
-            key={offset.minutes}
-            active={selectedOffset===offset.minutes}
-            onClick={()=>setSelectedOffset(offset.minutes)}
-          >{offset.label}</ChoiceButton>)}
-        </div>
-
-        <div style={{marginTop:18,padding:14,border:"1px solid #eadfce",borderRadius:14,background:"#faf7f1"}}>
-          <div className="muted">目前選擇</div>
-          <div style={{fontWeight:950,fontSize:18,marginTop:4,lineHeight:1.6}}>
-            {selectedBoss}｜{selectedServer}｜{selectedChannel?`CH${selectedChannel}`:"尚未選 CH"}
-          </div>
-          <div className="muted" style={{marginTop:2}}>
-            重生：{selectedRespawn?.label??"尚未選"}｜擊殺：{defeatedOffsets.find(x=>x.minutes===selectedOffset)?.label}
+            {saving?"紀錄中…":"⚔️ 王已消滅，開始倒數"}
+          </button>
+          <div className="muted" style={{marginTop:9,textAlign:"center"}}>
+            同一隻王、同一頻道短時間多人回報會自動合併成同一輪，不會重複計算。
           </div>
         </div>
 
-        <button
-          type="button"
-          className="btn green"
-          disabled={saving||!user||!selectedChannel||!selectedRespawn}
-          onClick={()=>void startTimer()}
-          style={{width:"100%",marginTop:12,padding:"15px 16px",fontSize:17}}
-        >
-          {saving?"儲存中…":"👑 開始／更新這隻王的計時"}
-        </button>
-      </div>
+        <div className="sectionTitle"><h2>目前計時</h2><p>所有玩家共用。</p></div>
+        {loading
+          ?<div className="panel"><div className="empty">正在載入王計時…</div></div>
+          :sortedTimers.length===0
+            ?<div className="panel"><div className="empty">目前還沒有任何王擊殺紀錄。</div></div>
+            :<div className="grid">
+              {sortedTimers.map(timer=>{
+                const boss=bossMap[timer.boss_key];
+                if(!boss)return null;
+                const phase=phaseOf(timer,boss,now);
+                const status=phase.phase==="countdown"?"⏳ 倒數中":phase.phase==="window"?"🔥 重生區間":"✅ 可巡頻";
+                const main=phase.phase==="countdown"
+                  ?`距最早重生 ${countdown(phase.start-now)}`
+                  :phase.phase==="window"
+                    ?`區間剩餘 ${countdown(phase.end-now)}`
+                    :"已超過目前參考區間";
 
-      <div className="sectionTitle">
-        <h2>目前王計時</h2>
-        <p>篩選也全部改成直接點選。</p>
-      </div>
-
-      <div className="panel" style={{marginBottom:18}}>
-        <div className="muted" style={{fontWeight:900,marginBottom:7}}>伺服器</div>
-        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-          <ChoiceButton active={serverFilter==="all"} onClick={()=>setServerFilter("all")}>全部</ChoiceButton>
-          {gameServers.map(server=><ChoiceButton key={server} active={serverFilter===server} onClick={()=>setServerFilter(server)}>{server}</ChoiceButton>)}
-        </div>
-
-        <div className="muted" style={{fontWeight:900,margin:"14px 0 7px"}}>狀態</div>
-        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-          <ChoiceButton active={phaseFilter==="all"} onClick={()=>setPhaseFilter("all")}>全部</ChoiceButton>
-          <ChoiceButton active={phaseFilter==="window"} onClick={()=>setPhaseFilter("window")}>🔥 重生區間</ChoiceButton>
-          <ChoiceButton active={phaseFilter==="ready"} onClick={()=>setPhaseFilter("ready")}>✅ 可能已出</ChoiceButton>
-          <ChoiceButton active={phaseFilter==="countdown"} onClick={()=>setPhaseFilter("countdown")}>⏳ 倒數中</ChoiceButton>
-        </div>
-
-        <div className="muted" style={{fontWeight:900,margin:"14px 0 7px"}}>BOSS</div>
-        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-          <ChoiceButton active={bossFilter==="all"} onClick={()=>setBossFilter("all")}>全部</ChoiceButton>
-          {bossPresets.map(boss=><ChoiceButton key={boss.name} active={bossFilter===boss.name} onClick={()=>setBossFilter(boss.name)}>{boss.short}</ChoiceButton>)}
-        </div>
-
-        <button className="btn soft" style={{marginTop:14}} onClick={()=>void loadTimers()}>重新整理</button>
-      </div>
-
-      {loading
-        ?<div className="panel"><div className="empty">正在載入王計時…</div></div>
-        :filteredTimers.length===0
-          ?<div className="panel"><div className="empty">目前沒有符合條件的王計時。</div></div>
-          :<div className="grid">
-            {filteredTimers.map(timer=>{
-              const phase=phaseOf(timer,now);
-              const fixed=timer.respawn_min_minutes===timer.respawn_max_minutes;
-              const statusText=phase.key==="window"?"🔥 重生區間":phase.key==="ready"?"✅ 可能已重生":"⏳ 倒數中";
-              const mainText=phase.key==="countdown"
-                ?`剩餘 ${countdown(phase.start-now)}`
-                :phase.key==="window"
-                  ?`區間剩 ${countdown(phase.end-now)}`
-                  :"建議立即巡頻確認";
-
-              return <article className="card" key={timer.id}>
-                <div className="cardHead">
-                  <div>
-                    <span className="muted" style={{fontWeight:900}}>{timer.server}｜CH{timer.channel}</span>
-                    <h3>{timer.boss_name}</h3>
+                return <article className="card" key={timer.id}>
+                  <div className="cardHead">
+                    <div>
+                      <span className="muted" style={{fontWeight:900}}>{ACTIVE_SERVER}｜CH{timer.channel}</span>
+                      <h3>{boss.icon} {boss.boss_name}</h3>
+                    </div>
+                    <span className="status">{status}</span>
                   </div>
-                  <span className="status">{statusText}</span>
+                  <div style={{fontSize:23,fontWeight:950,marginTop:13}}>{main}</div>
+                  <div className="muted" style={{marginTop:8,lineHeight:1.7}}>
+                    擊殺：{formatDateTime(timer.defeated_at)}<br/>
+                    參考：{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}<br/>
+                    {boss.respawn_min_minutes===boss.respawn_max_minutes
+                      ?<>預計：{formatDateTime(phase.start)}</>
+                      :<>區間：{formatDateTime(phase.start)} ～ {formatDateTime(phase.end)}</>}
+                  </div>
+                </article>;
+              })}
+            </div>}
+      </>}
+
+      {showAdmin&&isAdmin&&<>
+        <div className="sectionTitle">
+          <h2>官方帳號｜王重生實測統計</h2>
+          <p>這裡不要求玩家按「王已重生」，只分析連續擊殺紀錄。</p>
+        </div>
+
+        <div className="panel" style={{marginBottom:18}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <div>
+              <b>目前統計方式</b>
+              <div className="muted" style={{marginTop:4,maxWidth:760}}>
+                同王＋同頻道的下一次有效擊殺，形成一筆「擊殺間隔」。間隔包含真正重生時間＋玩家找到王／擊殺所花的時間，因此後台同時看最短值、P10、中位數與分布，不直接把平均值當成真正重生時間。
+              </div>
+            </div>
+            <button className="btn soft" onClick={()=>void loadAdminData()}>{adminLoading?"整理中…":"重新整理統計"}</button>
+          </div>
+        </div>
+
+        {adminLoading
+          ?<div className="panel"><div className="empty">正在整理玩家實測資料…</div></div>
+          :<div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {adminStats.map(stat=>{
+              const maxCount=Math.max(1,...stat.histogram.map(row=>row.count));
+              return <article className="panel" key={stat.boss.boss_key}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontSize:21,fontWeight:950}}>{stat.boss.icon} {stat.boss.boss_name}</div>
+                    <div className="muted" style={{marginTop:3}}>目前參考：{minutesLabel(stat.boss.respawn_min_minutes,stat.boss.respawn_max_minutes)}</div>
+                  </div>
+                  <span className="status">{stat.intervals.length} 筆有效週期</span>
                 </div>
 
-                <div style={{fontSize:26,fontWeight:900,marginTop:14}}>{mainText}</div>
-                <div className="muted" style={{marginTop:8,lineHeight:1.7}}>
-                  擊殺：{formatDateTime(timer.defeated_at)}<br/>
-                  {fixed
-                    ?<>預計重生：{formatDateTime(phase.start)}</>
-                    :<>重生區間：{formatDateTime(phase.start)} ～ {formatDateTime(phase.end)}</>
-                  }
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,marginTop:14}}>
+                  {[
+                    ["擊殺事件",stat.events],
+                    ["參與玩家",stat.uniquePlayers],
+                    ["最短",stat.min===null?"—":`${stat.min} 分`],
+                    ["P10",stat.p10===null?"—":`${stat.p10} 分`],
+                    ["中位數",stat.median===null?"—":`${stat.median} 分`],
+                    ["P90",stat.p90===null?"—":`${stat.p90} 分`],
+                    ["平均",stat.average===null?"—":`${stat.average} 分`]
+                  ].map(([label,value])=><div key={String(label)} style={{padding:10,border:"1px solid #eadfce",borderRadius:12,background:"#fbf8f2",textAlign:"center"}}>
+                    <div className="muted">{label}</div>
+                    <div style={{fontWeight:950,fontSize:17,marginTop:3}}>{value}</div>
+                  </div>)}
                 </div>
 
-                <div className="cardActions" style={{gap:8,flexWrap:"wrap"}}>
-                  <button className="btn green" disabled={!user} onClick={()=>void markDefeatedNow(timer)}>
-                    ✅ 剛剛擊殺
-                  </button>
-                  {user?.id===timer.created_by&&
-                    <button className="btn danger" onClick={()=>void deleteTimer(timer)}>刪除</button>
-                  }
-                </div>
-
-                <div className="muted" style={{marginTop:10,fontSize:12}}>
-                  最後更新：{formatDateTime(timer.updated_at)}
+                <div style={{marginTop:14}}>
+                  <div className="muted" style={{fontWeight:900,marginBottom:7}}>5 分鐘區間分布</div>
+                  {stat.histogram.length===0
+                    ?<div className="empty">還沒有足夠的連續擊殺資料。</div>
+                    :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {stat.histogram.map(row=><div key={row.label} style={{display:"grid",gridTemplateColumns:"90px 1fr 38px",gap:8,alignItems:"center"}}>
+                        <div className="muted" style={{fontWeight:800}}>{row.label}</div>
+                        <div style={{height:12,borderRadius:999,background:"#f0ebe3",overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${Math.max(4,row.count/maxCount*100)}%`,background:"#6d8f3f",borderRadius:999}}/>
+                        </div>
+                        <div className="muted" style={{textAlign:"right"}}>{row.count}</div>
+                      </div>)}
+                    </div>}
                 </div>
               </article>;
             })}
-          </div>
-      }
+          </div>}
+      </>}
     </main>
 
     {message&&<div className="toast">{message}</div>}
