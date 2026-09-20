@@ -405,7 +405,13 @@ export default function BossTimerPage(){
     });
     setSaving(false);
 
-    if(rpcError)return flash(rpcError.message);
+    if(rpcError){
+      const msg=rpcError.message||"";
+      if(msg.includes("record_boss_kill")&&msg.includes("schema cache")){
+        return flash("王計時資料庫尚未完成：請在 Supabase 執行 fengban_v20_boss_timer_rpc_fix.sql");
+      }
+      return flash(msg);
+    }
 
     const row=Array.isArray(data)?data[0]:data;
     await loadPublicData();
