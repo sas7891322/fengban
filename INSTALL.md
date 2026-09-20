@@ -55,3 +55,22 @@ v19 使用新的資料表：
 主站目前已經用 `admin_users` 判斷管理員，因此這版沿用同一套權限。
 
 如果你的官方帳號本來就已經能開啟楓伴「管理員審核」，王計時頁就會自動出現「📊 官方統計」。
+
+
+## v3.1 修正
+王清單現在有前端保底資料。即使 `boss_definitions` 尚未建立或 SQL 尚未 seed，8 隻王仍會正常顯示；Supabase 主要負責多人倒數與統計。
+
+## v3.2 官方王圖片
+
+這版已將 8 張王圖片放進 `public/bosses/`，王選擇畫面會直接顯示圖片卡：
+
+- `mano.png`：紅寶王
+- `stumpy.png`：樹妖王
+- `zombie-lupin-boss.png`：殭屍猴王
+- `king-clang.png`：巨居蟹
+- `mushmom.png`：蘑菇王
+- `dyle.png`：沼澤巨鱷
+- `zombie-mushmom.png`：殭屍蘑菇王
+- `jr-balrog.png`：巴洛古
+
+把 `public/bosses/` 整個資料夾一起複製到楓伴專案即可。頁面使用 Next.js `Image` 顯示，保留透明背景並自動等比例縮放。

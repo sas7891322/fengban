@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {useEffect,useMemo,useState} from "react";
 import type {User} from "@supabase/supabase-js";
 import {supabase,supabaseConfigured} from "@/lib/supabase";
@@ -60,6 +61,44 @@ type AdminBossStat={
 
 const ACTIVE_SERVER="菇菇寶貝";
 const channels=Array.from({length:60},(_,i)=>i+1);
+
+const BOSS_IMAGES:Record<string,string>={
+  mano:"/bosses/mano.png",
+  stumpy:"/bosses/stumpy.png",
+  zombie_lupin_boss:"/bosses/zombie-lupin-boss.png",
+  king_clang:"/bosses/king-clang.png",
+  mushmom:"/bosses/mushmom.png",
+  dyle:"/bosses/dyle.png",
+  zombie_mushmom:"/bosses/zombie-mushmom.png",
+  jr_balrog:"/bosses/jr-balrog.png"
+};
+
+function BossImage({boss,size=92}:{boss:BossDefinition;size?:number}){
+  const src=BOSS_IMAGES[boss.boss_key];
+  if(!src)return <div style={{fontSize:30}}>{boss.icon}</div>;
+  return <div style={{height:size,display:"grid",placeItems:"center"}}>
+    <Image
+      src={src}
+      alt={boss.boss_name}
+      width={size}
+      height={size}
+      sizes={`${size}px`}
+      style={{width:"100%",height:"100%",objectFit:"contain"}}
+    />
+  </div>;
+}
+
+// 前端保底王清單：就算 Supabase 尚未建立 boss_definitions，畫面仍會顯示王。
+const DEFAULT_BOSSES:BossDefinition[]=[
+  {boss_key:"mano",boss_name:"紅寶王",short_name:"紅寶王",icon:"🔴",respawn_min_minutes:30,respawn_max_minutes:45,source_type:"community",source_note:"現版本仍需更多實測",sort_order:10,is_active:true},
+  {boss_key:"stumpy",boss_name:"樹妖王",short_name:"樹妖王",icon:"🌳",respawn_min_minutes:35,respawn_max_minutes:45,source_type:"community",source_note:"目前參考 35～45 分",sort_order:20,is_active:true},
+  {boss_key:"zombie_lupin_boss",boss_name:"殭屍猴王",short_name:"猴王",icon:"🐒",respawn_min_minutes:45,respawn_max_minutes:45,source_type:"community",source_note:"目前參考 45 分",sort_order:30,is_active:true},
+  {boss_key:"king_clang",boss_name:"巨居蟹",short_name:"巨居蟹",icon:"🦀",respawn_min_minutes:45,respawn_max_minutes:45,source_type:"community",source_note:"目前參考 45 分",sort_order:40,is_active:true},
+  {boss_key:"mushmom",boss_name:"蘑菇王",short_name:"蘑菇王",icon:"🍄",respawn_min_minutes:45,respawn_max_minutes:60,source_type:"community",source_note:"目前參考 45～60 分",sort_order:50,is_active:true},
+  {boss_key:"dyle",boss_name:"沼澤巨鱷",short_name:"巨鱷",icon:"🐊",respawn_min_minutes:45,respawn_max_minutes:45,source_type:"community",source_note:"目前參考 45 分",sort_order:60,is_active:true},
+  {boss_key:"zombie_mushmom",boss_name:"殭屍蘑菇王",short_name:"殭屍菇王",icon:"☠️",respawn_min_minutes:45,respawn_max_minutes:55,source_type:"fengban",source_note:"楓伴實測約 45～55 分",sort_order:70,is_active:true},
+  {boss_key:"jr_balrog",boss_name:"巴洛古",short_name:"巴洛古",icon:"👹",respawn_min_minutes:405,respawn_max_minutes:540,source_type:"community",source_note:"暫用社群參考值，待實測校正",sort_order:80,is_active:true}
+];
 
 function minutesLabel(min:number,max:number){
   const pretty=(value:number)=>{
@@ -160,9 +199,9 @@ function ChoiceButton({active,children,onClick,disabled=false}:{active:boolean;c
 export default function BossTimerPage(){
   const[user,setUser]=useState<User|null>(null);
   const[isAdmin,setIsAdmin]=useState(false);
-  const[bosses,setBosses]=useState<BossDefinition[]>([]);
+  const[bosses,setBosses]=useState<BossDefinition[]>(DEFAULT_BOSSES);
   const[timers,setTimers]=useState<BossTimerState[]>([]);
-  const[selectedBossKey,setSelectedBossKey]=useState("");
+  const[selectedBossKey,setSelectedBossKey]=useState(DEFAULT_BOSSES[0]?.boss_key??"");
   const[selectedChannel,setSelectedChannel]=useState<number|null>(null);
   const[loading,setLoading]=useState(supabaseConfigured);
   const[saving,setSaving]=useState(false);
@@ -204,18 +243,23 @@ export default function BossTimerPage(){
         .order("updated_at",{ascending:false})
     ]);
 
-    if(bossResult.error||timerResult.error){
-      const issue=bossResult.error??timerResult.error;
-      setError(issue?.message??"王計時資料載入失敗");
+    // boss_definitions 尚未建立或尚未 seed 時，用前端內建清單保底。
+    const databaseBosses=!bossResult.error&&bossResult.data&&bossResult.data.length>0
+      ?bossResult.data as BossDefinition[]
+      :DEFAULT_BOSSES;
+    setBosses(databaseBosses);
+    setSelectedBossKey(current=>current||databaseBosses[0]?.boss_key||"");
+
+    // 計時表若尚未建立，王仍要顯示，只提示資料庫尚未完成。
+    if(timerResult.error){
+      setTimers([]);
+      setError("王清單已載入；倒數資料庫尚未完成設定："+timerResult.error.message);
       setLoading(false);
       return;
     }
 
-    const loadedBosses=(bossResult.data??[]) as BossDefinition[];
-    setBosses(loadedBosses);
     setTimers((timerResult.data??[]) as BossTimerState[]);
-    setSelectedBossKey(current=>current||loadedBosses[0]?.boss_key||"");
-    setError("");
+    setError(bossResult.error?"王清單目前使用內建資料；完成 Supabase SQL 後會自動改用資料庫設定。":"");
     setLoading(false);
   }
 
@@ -435,9 +479,9 @@ export default function BossTimerPage(){
                 setSelectedChannel(null);
               }}
             >
-              <div style={{fontSize:23}}>{boss.icon}</div>
-              <div style={{marginTop:3}}>{boss.short_name}</div>
-              <div className="muted" style={{marginTop:3}}>{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}</div>
+              <BossImage boss={boss} size={96}/>
+              <div style={{marginTop:6,fontSize:15}}>{boss.short_name}</div>
+              <div className="muted" style={{marginTop:4}}>{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}</div>
             </ChoiceButton>)}
           </div>
 
@@ -495,7 +539,10 @@ export default function BossTimerPage(){
                   <div className="cardHead">
                     <div>
                       <span className="muted" style={{fontWeight:900}}>{ACTIVE_SERVER}｜CH{timer.channel}</span>
-                      <h3>{boss.icon} {boss.boss_name}</h3>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                        <BossImage boss={boss} size={54}/>
+                        <h3 style={{margin:0}}>{boss.boss_name}</h3>
+                      </div>
                     </div>
                     <span className="status">{status}</span>
                   </div>
@@ -538,7 +585,10 @@ export default function BossTimerPage(){
               return <article className="panel" key={stat.boss.boss_key}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
                   <div>
-                    <div style={{fontSize:21,fontWeight:950}}>{stat.boss.icon} {stat.boss.boss_name}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:9}}>
+                      <BossImage boss={stat.boss} size={58}/>
+                      <div style={{fontSize:21,fontWeight:950}}>{stat.boss.boss_name}</div>
+                    </div>
                     <div className="muted" style={{marginTop:3}}>目前參考：{minutesLabel(stat.boss.respawn_min_minutes,stat.boss.respawn_max_minutes)}</div>
                   </div>
                   <span className="status">{stat.intervals.length} 筆有效週期</span>
