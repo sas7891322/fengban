@@ -75,15 +75,15 @@ const BOSS_IMAGES:Record<string,string>={
 
 function BossImage({boss,size=92}:{boss:BossDefinition;size?:number}){
   const src=BOSS_IMAGES[boss.boss_key];
-  if(!src)return <div style={{fontSize:30}}>{boss.icon}</div>;
-  return <div style={{height:size,display:"grid",placeItems:"center"}}>
+  if(!src)return <div style={{width:size,height:size,display:"grid",placeItems:"center",margin:"0 auto",fontSize:30}}>{boss.icon}</div>;
+  return <div style={{width:size,height:size,display:"grid",placeItems:"center",margin:"0 auto",flex:"0 0 auto"}}>
     <Image
       src={src}
       alt={boss.boss_name}
       width={size}
       height={size}
       sizes={`${size}px`}
-      style={{width:"100%",height:"100%",objectFit:"contain"}}
+      style={{width:size,height:size,objectFit:"contain",display:"block"}}
     />
   </div>;
 }
