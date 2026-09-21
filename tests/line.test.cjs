@@ -84,3 +84,22 @@ test('tap flow from server to boss, channel and signed confirmation reaches shar
   const query=await tap('a=query&s=0&b=mushmom');assert.match(query.text,/60 頻/);assert.match(query.text,/已進入預估刷新區間/);
  }finally{global.fetch=oldFetch;}
 });
+test('database errors return safe diagnostics without exposing credentials or user data',async()=>{
+ const oldFetch=global.fetch,oldLog=console.error;const logs=[];let reply;
+ console.error=(...args)=>logs.push(args.join(' '));
+ global.fetch=async(input,init)=>{
+  if(String(input).includes('/boss_definitions'))return Response.json({message:'Invalid API key SECRET_SENTINEL',details:'Utest test-service',hint:'private'},{status:401});
+  if(String(input).includes('/message/reply')){reply=JSON.parse(init.body);return Response.json({});}
+  throw new Error('Unexpected request');
+ };
+ try{
+  const raw=JSON.stringify({events:[{...base,type:'postback',postback:{data:'a=bosses&s=0'}}]});
+  const signature=createHmac('sha256','test-secret').update(raw).digest('base64');
+  const result=await POST(new Request('https://example.test',{method:'POST',body:raw,headers:{'x-line-signature':signature}}));
+  assert.equal(result.status,500);
+  assert.match(reply.messages[0].text,/DB_AUTH/);
+  assert.match(logs.join(' '),/v23.1/);
+  assert.match(logs.join(' '),/bosses/);
+  assert.doesNotMatch(logs.join(' ')+reply.messages[0].text,/SECRET_SENTINEL|Utest|test-service|private/);
+ }finally{global.fetch=oldFetch;console.error=oldLog;}
+});
