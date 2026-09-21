@@ -74,3 +74,6 @@ v19 使用新的資料表：
 - `jr-balrog.png`：巴洛古
 
 把 `public/bosses/` 整個資料夾一起複製到楓伴專案即可。頁面使用 Next.js `Image` 顯示，保留透明背景並自動等比例縮放。
+
+## v3.5 更新
+若你已經安裝 v3.4 並且 v22 SQL 已正常運作，這次只需要更新 `app/boss-timer/page.tsx`。不需要再執行 Supabase SQL。
