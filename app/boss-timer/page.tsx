@@ -59,7 +59,8 @@ type AdminBossStat={
   histogram:Array<{label:string;count:number}>;
 };
 
-const ACTIVE_SERVER="菇菇寶貝";
+const GAME_SERVERS=["菇菇寶貝","雪吉拉"] as const;
+type GameServer=typeof GAME_SERVERS[number];
 const channels=Array.from({length:60},(_,i)=>i+1);
 
 const BOSS_IMAGES:Record<string,string>={
@@ -201,6 +202,7 @@ export default function BossTimerPage(){
   const[isAdmin,setIsAdmin]=useState(false);
   const[bosses,setBosses]=useState<BossDefinition[]>(DEFAULT_BOSSES);
   const[timers,setTimers]=useState<BossTimerState[]>([]);
+  const[selectedServer,setSelectedServer]=useState<GameServer>("菇菇寶貝");
   const[selectedBossKey,setSelectedBossKey]=useState(DEFAULT_BOSSES[0]?.boss_key??"");
   const[selectedChannel,setSelectedChannel]=useState<number|null>(null);
   const[loading,setLoading]=useState(supabaseConfigured);
@@ -239,7 +241,7 @@ export default function BossTimerPage(){
         .order("sort_order"),
       client.from("boss_timer_state")
         .select("id,server,boss_key,channel,defeated_at,event_id,updated_at")
-        .eq("server",ACTIVE_SERVER)
+        .in("server",[...GAME_SERVERS])
         .order("updated_at",{ascending:false})
     ]);
 
@@ -281,14 +283,18 @@ export default function BossTimerPage(){
     const client=supabase;
     if(!client||!isAdmin)return;
     setAdminLoading(true);
-    const[eventResult,confirmationResult]=await Promise.all([
+    const[eventResult,confirmationResult,lineConfirmationResult]=await Promise.all([
       client.from("boss_kill_events")
         .select("id,server,boss_key,channel,defeated_at,interval_seconds,created_at")
-        .eq("server",ACTIVE_SERVER)
+        .eq("server",selectedServer)
         .order("defeated_at",{ascending:false})
         .limit(3000),
       client.from("boss_kill_confirmations")
         .select("event_id,user_id,reported_at")
+        .order("reported_at",{ascending:false})
+        .limit(6000),
+      client.from("line_boss_confirmations")
+        .select("event_id,reporter_hash,reported_at")
         .order("reported_at",{ascending:false})
         .limit(6000)
     ]);
@@ -300,7 +306,10 @@ export default function BossTimerPage(){
     }
 
     setAdminEvents((eventResult.data??[]) as BossKillEvent[]);
-    setAdminConfirmations((confirmationResult.data??[]) as BossKillConfirmation[]);
+    setAdminConfirmations([
+      ...((confirmationResult.data??[]) as BossKillConfirmation[]),
+      ...(lineConfirmationResult.data??[]).map(row=>({event_id:row.event_id,user_id:`line:${row.reporter_hash}`,reported_at:row.reported_at}))
+    ]);
     setAdminLoading(false);
   }
 
@@ -340,10 +349,15 @@ export default function BossTimerPage(){
 
   useEffect(()=>{
     if(showAdmin&&isAdmin)void loadAdminData();
-  },[showAdmin,isAdmin]);
+  },[showAdmin,isAdmin,selectedServer]);
+
+  const serverTimers=useMemo(
+    ()=>timers.filter(timer=>timer.server===selectedServer),
+    [timers,selectedServer]
+  );
 
   const sortedTimers=useMemo(()=>{
-    return [...timers].sort((a,b)=>{
+    return [...serverTimers].sort((a,b)=>{
       const bossA=bossMap[a.boss_key];
       const bossB=bossMap[b.boss_key];
       if(!bossA||!bossB)return 0;
@@ -355,7 +369,7 @@ export default function BossTimerPage(){
       if(rank!==0)return rank;
       return new Date(b.updated_at).getTime()-new Date(a.updated_at).getTime();
     });
-  },[timers,bossMap,now]);
+  },[serverTimers,bossMap,now]);
 
   const adminStats=useMemo<AdminBossStat[]>(()=>{
     if(!isAdmin)return [];
@@ -399,7 +413,7 @@ export default function BossTimerPage(){
 
     setSaving(true);
     const{data,error:rpcError}=await client.rpc("record_boss_kill",{
-      p_server:ACTIVE_SERVER,
+      p_server:selectedServer,
       p_boss_key:selectedBoss.boss_key,
       p_channel:selectedChannel
     });
@@ -418,14 +432,14 @@ export default function BossTimerPage(){
     if(showAdmin&&isAdmin)void loadAdminData();
 
     if(row?.was_duplicate){
-      flash(`已合併到 ${selectedBoss.short_name} CH${selectedChannel} 的同一輪擊殺`);
+      flash(`已合併到 ${selectedServer}｜${selectedBoss.short_name} CH${selectedChannel} 的同一輪擊殺`);
     }else{
-      flash(`${selectedBoss.short_name} CH${selectedChannel} 已開始倒數`);
+      flash(`${selectedServer}｜${selectedBoss.short_name} CH${selectedChannel} 已開始倒數`);
     }
   }
 
-  const activeCount=timers.length;
-  const windowCount=timers.filter(timer=>{
+  const activeCount=serverTimers.length;
+  const windowCount=serverTimers.filter(timer=>{
     const boss=bossMap[timer.boss_key];
     return boss&&phaseOf(timer,boss,now).phase==="window";
   }).length;
@@ -456,9 +470,9 @@ export default function BossTimerPage(){
       </section>
 
       <div className="panel" style={{marginTop:18,display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10,textAlign:"center"}}>
-        <div><div className="muted">測試伺服器</div><div style={{fontWeight:950,fontSize:18,marginTop:4}}>{ACTIVE_SERVER}</div></div>
-        <div><div className="muted">目前追蹤</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{activeCount}</div></div>
-        <div><div className="muted">🔥 重生區間</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{windowCount}</div></div>
+        <div><div className="muted">目前伺服器</div><div style={{fontWeight:950,fontSize:18,marginTop:4}}>{selectedServer}</div></div>
+        <div><div className="muted">目前追蹤（{selectedServer}）</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{activeCount}</div></div>
+        <div><div className="muted">🔥 重生區間（{selectedServer}）</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{windowCount}</div></div>
       </div>
 
       {error&&<div className="panel" style={{marginTop:18}}>
@@ -474,6 +488,20 @@ export default function BossTimerPage(){
             <b>目前是訪客模式</b>
             <div className="muted" style={{marginTop:4}}>可以看計時；要回報王已消滅，需要先登入楓伴。</div>
           </div>}
+
+          <div style={{fontWeight:950,marginBottom:9}}>伺服器</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:18}}>
+            {GAME_SERVERS.map(server=><ChoiceButton
+              key={server}
+              active={selectedServer===server}
+              onClick={()=>{
+                setSelectedServer(server);
+                setSelectedChannel(null);
+              }}
+            >
+              <div style={{fontSize:17}}>{server}</div>
+            </ChoiceButton>)}
+          </div>
 
           <div style={{fontWeight:950,marginBottom:9}}>1．選王</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(108px,1fr))",gap:8}}>
@@ -497,13 +525,13 @@ export default function BossTimerPage(){
               key={channel}
               active={selectedChannel===channel}
               onClick={()=>setSelectedChannel(channel)}
-            >CH{channel}</ChoiceButton>)}
+            >{channel}</ChoiceButton>)}
           </div>
 
           <div style={{marginTop:18,padding:14,border:"1px solid #eadfce",borderRadius:14,background:"#faf7f1"}}>
             <div className="muted">目前選擇</div>
             <div style={{fontWeight:950,fontSize:18,marginTop:4}}>
-              {selectedBoss?.boss_name??"尚未選王"}｜{selectedChannel?`CH${selectedChannel}`:"尚未選頻道"}
+              {selectedServer}｜{selectedBoss?.boss_name??"尚未選王"}｜{selectedChannel?`CH${selectedChannel}`:"尚未選頻道"}
             </div>
             {selectedBoss&&<div className="muted" style={{marginTop:4}}>
               目前參考重生：{minutesLabel(selectedBoss.respawn_min_minutes,selectedBoss.respawn_max_minutes)}
@@ -544,7 +572,7 @@ export default function BossTimerPage(){
                 return <article className="card" key={timer.id}>
                   <div className="cardHead">
                     <div>
-                      <span className="muted" style={{fontWeight:900}}>{ACTIVE_SERVER}｜CH{timer.channel}</span>
+                      <span className="muted" style={{fontWeight:900}}>{timer.server}｜CH{timer.channel}</span>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                         <BossImage boss={boss} size={54}/>
                         <h3 style={{margin:0}}>{boss.boss_name}</h3>
