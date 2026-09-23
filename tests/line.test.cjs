@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const ts=require('typescript');
 const dir=fs.mkdtempSync(path.join(__dirname,'.line-test-'));
-for(const name of ['core','bot'])fs.writeFileSync(path.join(dir,name+'.js'),ts.transpileModule(fs.readFileSync(path.join(__dirname,'../lib/line',name+'.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText);
+for(const name of ['core','catalog','bot'])fs.writeFileSync(path.join(dir,name+'.js'),ts.transpileModule(fs.readFileSync(path.join(__dirname,'../lib/line',name+'.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText);
 const route=fs.readFileSync(path.join(__dirname,'../app/api/line/webhook/route.ts'),'utf8').replaceAll('@/lib/line/','./');
 fs.writeFileSync(path.join(dir,'route.js'),ts.transpileModule(route,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText);
 after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -46,7 +46,7 @@ test('six entry points and server selection work without database calls',async()
  const servers=await handleEvent({...base,type:'message',message:{type:'text',text:'Boss刷新查詢'}});
  assert.deepEqual(servers[0].quickReply.items.map(i=>i.action.label),['菇菇寶貝','雪吉拉']);
  const pending=await handleEvent({...base,type:'message',message:{type:'text',text:'裝備查詢'}});
- assert.match(pending[0].text,/尚未接入/);
+ assert.match(pending[0].text,/裝備查詢｜請輸入/);
 });
 test('button payload stays within LINE limits, datetime uses Taipei',()=>{
  const b=core.button('測試',{a:'confirm',s:0,b:'zombie_mushmom',c:60,t:10});assert.ok(b.data.length<=300);

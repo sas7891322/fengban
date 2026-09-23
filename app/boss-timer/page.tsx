@@ -356,20 +356,36 @@ export default function BossTimerPage(){
     [timers,selectedServer]
   );
 
-  const sortedTimers=useMemo(()=>{
-    return [...serverTimers].sort((a,b)=>{
-      const bossA=bossMap[a.boss_key];
-      const bossB=bossMap[b.boss_key];
-      if(!bossA||!bossB)return 0;
-      const phaseRank=(timer:BossTimerState,boss:BossDefinition)=>{
-        const {phase}=phaseOf(timer,boss,now);
-        return phase==="window"?0:phase==="ready"?1:2;
-      };
-      const rank=phaseRank(a,bossA)-phaseRank(b,bossB);
-      if(rank!==0)return rank;
-      return new Date(b.updated_at).getTime()-new Date(a.updated_at).getTime();
-    });
-  },[serverTimers,bossMap,now]);
+  const timerGroups=useMemo(()=>bosses.map(boss=>{
+    const rows=serverTimers.filter(timer=>timer.boss_key===boss.boss_key)
+      .filter(timer=>Number.isFinite(Date.parse(timer.defeated_at))&&Date.parse(timer.defeated_at)<=now)
+      .sort((a,b)=>Date.parse(a.defeated_at)-Date.parse(b.defeated_at)||a.channel-b.channel);
+    return {boss,current:rows.filter(timer=>phaseOf(timer,boss,now).end>=now),
+      expired:rows.filter(timer=>phaseOf(timer,boss,now).end<now).reverse()};
+  }).filter(group=>group.current.length+group.expired.length>0),[bosses,serverTimers,now]);
+
+  function chooseReport(bossKey:string,channel:number|null=null){
+    setSelectedBossKey(bossKey);
+    setSelectedChannel(channel);
+    document.getElementById("boss-report")?.scrollIntoView({behavior:"smooth",block:"start"});
+  }
+
+  function timerRow(timer:BossTimerState,boss:BossDefinition){
+    const phase=phaseOf(timer,boss,now);
+    const expired=phase.end<now;
+    const label=expired?"已過期・狀態未確認":phase.start<=now?"已進入預估刷新區間":`約 ${Math.ceil((phase.start-now)/60000)} 分鐘後`;
+    return <div key={timer.id} style={{padding:"12px 0",borderTop:"1px solid #eadfce"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+        <strong>CH{timer.channel}</strong>
+        <span style={{fontWeight:800,color:expired?"#71665c":phase.start<=now?"#a44716":"#48692a"}}>{label}</span>
+      </div>
+      <div className="muted" style={{marginTop:5,lineHeight:1.7,overflowWrap:"anywhere"}}>
+        擊殺：{formatDateTime(timer.defeated_at)}<br/>
+        預估：{formatDateTime(phase.start)}{phase.end!==phase.start?` ～ ${formatDateTime(phase.end)}`:""}
+      </div>
+      <button type="button" className="btn soft" style={{marginTop:8}} onClick={()=>chooseReport(boss.boss_key,timer.channel)}>回報 CH{timer.channel} 擊殺</button>
+    </div>;
+  }
 
   const adminStats=useMemo<AdminBossStat[]>(()=>{
     if(!isAdmin)return [];
@@ -438,7 +454,7 @@ export default function BossTimerPage(){
     }
   }
 
-  const activeCount=serverTimers.length;
+  const activeCount=timerGroups.length;
   const windowCount=serverTimers.filter(timer=>{
     const boss=bossMap[timer.boss_key];
     return boss&&phaseOf(timer,boss,now).phase==="window";
@@ -471,7 +487,7 @@ export default function BossTimerPage(){
 
       <div className="panel" style={{marginTop:18,display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10,textAlign:"center"}}>
         <div><div className="muted">目前伺服器</div><div style={{fontWeight:950,fontSize:18,marginTop:4}}>{selectedServer}</div></div>
-        <div><div className="muted">目前追蹤（{selectedServer}）</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{activeCount}</div></div>
+        <div><div className="muted">追蹤王種</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{activeCount} 隻</div></div>
         <div><div className="muted">🔥 重生區間（{selectedServer}）</div><div style={{fontWeight:950,fontSize:22,marginTop:2}}>{windowCount}</div></div>
       </div>
 
@@ -482,7 +498,7 @@ export default function BossTimerPage(){
       </div>}
 
       {!showAdmin&&<>
-        <div className="sectionTitle"><h2>開始計時</h2><p>只有三步，全部用點的。</p></div>
+        <div id="boss-report" style={{scrollMarginTop:80}} className="sectionTitle"><h2>開始計時</h2><p>只有三步，全部用點的。</p></div>
         <div className="panel">
           {!user&&<div style={{padding:12,borderRadius:12,background:"rgba(118,80,160,.08)",marginBottom:16}}>
             <b>目前是訪客模式</b>
@@ -552,45 +568,39 @@ export default function BossTimerPage(){
           </div>
         </div>
 
-        <div className="sectionTitle"><h2>目前計時</h2><p>所有玩家共用。</p></div>
+        <div className="sectionTitle"><h2>目前計時</h2><p>每隻王一張卡片，先看最近 3 個頻道。</p></div>
+        <p className="muted">依玩家回報推算，進入刷新區間不代表王一定存在。過期紀錄預設收合。</p>
         {loading
           ?<div className="panel"><div className="empty">正在載入王計時…</div></div>
-          :sortedTimers.length===0
-            ?<div className="panel"><div className="empty">目前還沒有任何王擊殺紀錄。</div></div>
-            :<div className="grid">
-              {sortedTimers.map(timer=>{
-                const boss=bossMap[timer.boss_key];
-                if(!boss)return null;
-                const phase=phaseOf(timer,boss,now);
-                const status=phase.phase==="countdown"?"⏳ 倒數中":phase.phase==="window"?"🔥 重生區間":"✅ 可巡頻";
-                const main=phase.phase==="countdown"
-                  ?`距最早重生 ${countdown(phase.start-now)}`
-                  :phase.phase==="window"
-                    ?`區間剩餘 ${countdown(phase.end-now)}`
-                    :"已超過目前參考區間";
-
-                return <article className="card" key={timer.id}>
-                  <div className="cardHead">
-                    <div>
-                      <span className="muted" style={{fontWeight:900}}>{timer.server}｜CH{timer.channel}</span>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-                        <BossImage boss={boss} size={54}/>
-                        <h3 style={{margin:0}}>{boss.boss_name}</h3>
-                      </div>
-                    </div>
-                    <span className="status">{status}</span>
+          :timerGroups.length===0
+            ?<div className="panel"><div className="empty">{selectedServer}目前還沒有任何王擊殺紀錄。</div></div>
+            :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,340px),1fr))",gap:16,alignItems:"start"}}>
+              {timerGroups.map(({boss,current,expired})=><article className="card" key={`${selectedServer}:${boss.boss_key}`}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <BossImage boss={boss} size={64}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <span className="muted">{selectedServer}</span>
+                    <h3 style={{margin:"4px 0"}}>{boss.boss_name}</h3>
+                    <span className="muted">{current.length} 個有效頻道 · {expired.length} 個過期頻道</span>
                   </div>
-                  <div style={{fontSize:23,fontWeight:950,marginTop:13}}>{main}</div>
-                  <div className="muted" style={{marginTop:8,lineHeight:1.7}}>
-                    擊殺：{formatDateTime(timer.defeated_at)}<br/>
-                    參考：{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}<br/>
-                    {boss.respawn_min_minutes===boss.respawn_max_minutes
-                      ?<>預計：{formatDateTime(phase.start)}</>
-                      :<>區間：{formatDateTime(phase.start)} ～ {formatDateTime(phase.end)}</>}
-                  </div>
-                </article>;
-              })}
+                </div>
+                <div className="muted" style={{margin:"10px 0"}}>參考重生：{minutesLabel(boss.respawn_min_minutes,boss.respawn_max_minutes)}</div>
+                {current.slice(0,3).map(timer=>timerRow(timer,boss))}
+                {current.length===0&&<p className="muted">目前沒有仍在預估時段內的紀錄。</p>}
+                {current.length>3&&<details>
+                  <summary style={{cursor:"pointer",padding:"14px 0",fontWeight:900}}>查看全部有效頻道（{current.length}）</summary>
+                  <p className="muted">以下為其餘 {current.length-3} 個頻道，上方 3 個已列出。</p>
+                  {current.slice(3).map(timer=>timerRow(timer,boss))}
+                </details>}
+                {expired.length>0&&<details>
+                  <summary style={{cursor:"pointer",padding:"14px 0",color:"#71665c"}}>已過期紀錄（{expired.length}）</summary>
+                  <p className="muted">已超過預估區間，需玩家再次確認。這些紀錄不代表王仍在。</p>
+                  {expired.map(timer=>timerRow(timer,boss))}
+                </details>}
+                <button type="button" className="btn green" style={{marginTop:10,width:"100%"}} onClick={()=>chooseReport(boss.boss_key)}>回報擊殺</button>
+              </article>)}
             </div>}
+
       </>}
 
       {showAdmin&&isAdmin&&<>

@@ -1,3 +1,4 @@
+import {catalogCommand,catalogReply} from './catalog';
 import {createClient} from '@supabase/supabase-js';
 import {randomUUID} from 'node:crypto';
 import {Action,Boss,Message,SERVERS,button,message,identity,confirmationSignature,rankedTimers,timeLabel} from './core';
@@ -6,7 +7,7 @@ type Event={type:string; timestamp:number; replyToken?:string; source?:{type:str
 const HOME=()=>button('回主選單',{a:'home'});
 const ROOT=()=>message('楓伴小幫手｜請點選功能',[
   button('Boss刷新查詢',{a:'servers',m:'query'}),button('回報擊殺',{a:'servers',m:'report'}),button('我的收藏',{a:'favorites'}),
-  button('任務查詢',{a:'pending',kind:'任務'}),button('裝備查詢',{a:'pending',kind:'裝備'}),button('怪物查詢',{a:'pending',kind:'怪物'})]);
+  button('任務查詢',{a:'catalog',kind:'任務'}),button('裝備查詢',{a:'catalog',kind:'裝備'}),button('怪物查詢',{a:'catalog',kind:'怪物'})]);
 export async function handleEvent(event:Event):Promise<Message[]>{
   if(!event.replyToken || !['message','postback','follow'].includes(event.type))return [];
   if(event.source?.type!=='user'||!event.source.userId)return [message('請開啟與楓伴小幫手的一對一聊天使用功能。')];
@@ -18,12 +19,12 @@ export async function handleEvent(event:Event):Promise<Message[]>{
   if(event.type==='follow')return [ROOT()];
   if(event.type==='message'){
     const text=event.message?.text?.trim();
-    const commands:Record<string,string>={'Boss刷新查詢':'a=servers&m=query','回報擊殺':'a=servers&m=report','我的收藏':'a=favorites','任務查詢':'a=pending&kind=任務','裝備查詢':'a=pending&kind=裝備','怪物查詢':'a=pending&kind=怪物'};
-    p=new URLSearchParams(commands[text||'']||'a=home');
+    const commands:Record<string,string>={'Boss刷新查詢':'a=servers&m=query','回報擊殺':'a=servers&m=report','我的收藏':'a=favorites','任務查詢':'a=catalog&kind=任務','裝備查詢':'a=catalog&kind=裝備','怪物查詢':'a=catalog&kind=怪物'};
+    p=catalogCommand(text||'')||new URLSearchParams(commands[text||'']||'a=home');
   }
   const a=p.get('a');
   if(a==='home')return [ROOT()];
-  if(a==='pending')return [message(`${p.get('kind')||'此功能'}資料庫尚未接入，目前可使用王刷新查詢、回報擊殺與收藏王。`,[HOME()])];
+  if(a==='pending'||a?.startsWith('catalog'))return catalogReply(db,p);
   const m=p.get('m')==='report'?'report':'query';
   if(a==='servers')return [message('請選擇伺服器',SERVERS.map((s,i)=>button(s,{a:'bosses',s:i,m})))];
   if(a==='favorites'){
