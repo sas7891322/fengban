@@ -26,9 +26,6 @@ type BossTimerState={
   defeated_at:string;
   event_id:string;
   updated_at:string;
-  target_respawn_at:string|null;
-  window_before_minutes:number|null;
-  window_after_minutes:number|null;
 };
 
 type BossKillEvent={
@@ -134,15 +131,11 @@ function countdown(ms:number){
 }
 
 function phaseOf(timer:BossTimerState,boss:BossDefinition,now:number){
-  const customTarget=timer.target_respawn_at?Date.parse(timer.target_respawn_at):NaN;
-  const hasCustomTarget=Number.isFinite(customTarget);
   const killed=new Date(timer.defeated_at).getTime();
-  const before=Math.max(0,Number(timer.window_before_minutes??0));
-  const after=Math.max(0,Number(timer.window_after_minutes??0));
-  const start=hasCustomTarget?customTarget-before*60_000:killed+boss.respawn_min_minutes*60_000;
-  const end=hasCustomTarget?customTarget+after*60_000:killed+boss.respawn_max_minutes*60_000;
+  const start=killed+boss.respawn_min_minutes*60_000;
+  const end=killed+boss.respawn_max_minutes*60_000;
   const phase:TimerPhase=now<start?"countdown":now<=end&&end>start?"window":"ready";
-  return {phase,start,end,target:hasCustomTarget?customTarget:null,custom:hasCustomTarget};
+  return {phase,start,end};
 }
 
 function quantile(sorted:number[],q:number){
@@ -221,11 +214,11 @@ export default function BossTimerPage(){
   const[adminLoading,setAdminLoading]=useState(false);
   const[adminEvents,setAdminEvents]=useState<BossKillEvent[]>([]);
   const[adminConfirmations,setAdminConfirmations]=useState<BossKillConfirmation[]>([]);
-  const[editingTimerId,setEditingTimerId]=useState<string|null>(null);
-  const[resetMinutes,setResetMinutes]=useState(60);
-  const[windowBefore,setWindowBefore]=useState(0);
-  const[windowAfter,setWindowAfter]=useState(0);
-  const[resetSaving,setResetSaving]=useState(false);
+  const[editingBossKey,setEditingBossKey]=useState<string|null>(null);
+  const[bossBaseMinutes,setBossBaseMinutes]=useState(60);
+  const[bossBeforeMinutes,setBossBeforeMinutes]=useState(0);
+  const[bossAfterMinutes,setBossAfterMinutes]=useState(0);
+  const[bossSettingSaving,setBossSettingSaving]=useState(false);
 
   const flash=(text:string)=>{
     setMessage(text);
@@ -252,7 +245,7 @@ export default function BossTimerPage(){
         .eq("is_active",true)
         .order("sort_order"),
       client.from("boss_timer_state")
-        .select("id,server,boss_key,channel,defeated_at,event_id,updated_at,target_respawn_at,window_before_minutes,window_after_minutes")
+        .select("id,server,boss_key,channel,defeated_at,event_id,updated_at")
         .in("server",[...GAME_SERVERS])
         .order("updated_at",{ascending:false})
     ]);
@@ -382,36 +375,40 @@ export default function BossTimerPage(){
     document.getElementById("boss-report")?.scrollIntoView({behavior:"smooth",block:"start"});
   }
 
-  function openResetTimer(timer:BossTimerState,boss:BossDefinition){
-    const phase=phaseOf(timer,boss,Date.now());
-    const remaining=phase.target!==null?Math.max(0,Math.round((phase.target-Date.now())/60_000)):boss.respawn_min_minutes;
-    setEditingTimerId(timer.id);
-    setResetMinutes(remaining);
-    setWindowBefore(Math.max(0,Number(timer.window_before_minutes??0)));
-    setWindowAfter(Math.max(0,Number(timer.window_after_minutes??Math.max(0,boss.respawn_max_minutes-boss.respawn_min_minutes))));
+  function openBossSetting(boss:BossDefinition){
+    const min=Math.max(1,Number(boss.respawn_min_minutes)||1);
+    const max=Math.max(min,Number(boss.respawn_max_minutes)||min);
+    const base=min===max?min:Math.round((min+max)/2);
+    setEditingBossKey(boss.boss_key);
+    setBossBaseMinutes(base);
+    setBossBeforeMinutes(Math.max(0,base-min));
+    setBossAfterMinutes(Math.max(0,max-base));
   }
 
-  async function saveResetTimer(timer:BossTimerState){
+  async function saveBossSetting(boss:BossDefinition){
     const client=supabase;
     if(!client)return flash("尚未連接 Supabase");
-    if(!isAdmin)return flash("只有管理員可以重設倒數");
-    const base=Math.max(0,Math.min(10080,Math.round(Number(resetMinutes)||0)));
-    const before=Math.max(0,Math.min(1440,Math.round(Number(windowBefore)||0)));
-    const after=Math.max(0,Math.min(1440,Math.round(Number(windowAfter)||0)));
-    setResetSaving(true);
-    const{error:resetError}=await client.rpc("admin_reset_boss_timer",{
-      p_server:timer.server,
-      p_boss_key:timer.boss_key,
-      p_channel:timer.channel,
-      p_countdown_minutes:base,
-      p_before_minutes:before,
-      p_after_minutes:after
-    });
-    setResetSaving(false);
-    if(resetError)return flash(resetError.message);
-    setEditingTimerId(null);
+    if(!isAdmin)return flash("只有管理員可以調整王重生時間");
+    const base=Math.max(1,Math.min(10080,Math.round(Number(bossBaseMinutes)||1)));
+    const before=Math.max(0,Math.min(base-1,Math.round(Number(bossBeforeMinutes)||0)));
+    const after=Math.max(0,Math.min(10080-base,Math.round(Number(bossAfterMinutes)||0)));
+    const min=base-before;
+    const max=base+after;
+    setBossSettingSaving(true);
+    const{error:updateError}=await client
+      .from("boss_definitions")
+      .update({
+        respawn_min_minutes:min,
+        respawn_max_minutes:max,
+        source_type:"fengban",
+        source_note:before===0&&after===0?`楓伴設定：${base} 分鐘`:`楓伴設定：${base} 分鐘（-${before}/+${after}）`
+      })
+      .eq("boss_key",boss.boss_key);
+    setBossSettingSaving(false);
+    if(updateError)return flash(updateError.message);
+    setEditingBossKey(null);
     await loadPublicData();
-    flash(`CH${timer.channel} 已重設：${base} 分鐘後出生，區間 -${before}/+${after} 分`);
+    flash(`${boss.short_name} 已更新：${minutesLabel(min,max)}，所有頻道之後都套用新設定`);
   }
 
   function timerRow(timer:BossTimerState,boss:BossDefinition){
@@ -425,33 +422,11 @@ export default function BossTimerPage(){
       </div>
       <div className="muted" style={{marginTop:5,lineHeight:1.7,overflowWrap:"anywhere"}}>
         擊殺：{formatDateTime(timer.defeated_at)}<br/>
-        {phase.custom&&phase.target!==null&&<>設定出生：{formatDateTime(phase.target)}<br/></>}
         預估：{formatDateTime(phase.start)}{phase.end!==phase.start?` ～ ${formatDateTime(phase.end)}`:""}
-        {phase.custom&&<><br/>自訂區間：-{timer.window_before_minutes??0} / +{timer.window_after_minutes??0} 分</>}
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
         <button type="button" className="btn soft" onClick={()=>chooseReport(boss.boss_key,timer.channel)}>回報 CH{timer.channel} 擊殺</button>
-        {isAdmin&&<button type="button" className="btn soft" onClick={()=>openResetTimer(timer,boss)}>⏱️ 重設出生時間</button>}
       </div>
-      {isAdmin&&editingTimerId===timer.id&&<div style={{marginTop:10,padding:12,border:"1px solid #d8cdbd",borderRadius:12,background:"#fffdf9"}}>
-        <div style={{fontWeight:950,marginBottom:8}}>重設 CH{timer.channel} 倒數</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
-          <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>幾分鐘後出生
-            <input type="number" min="0" max="10080" value={resetMinutes} onChange={e=>setResetMinutes(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
-          </label>
-          <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>提前區間（-）
-            <input type="number" min="0" max="1440" value={windowBefore} onChange={e=>setWindowBefore(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
-          </label>
-          <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>延後區間（+）
-            <input type="number" min="0" max="1440" value={windowAfter} onChange={e=>setWindowAfter(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
-          </label>
-        </div>
-        <div className="muted" style={{marginTop:8}}>例如：60 分鐘後出生、-5 / +10，畫面會顯示 55～70 分鐘的預估區間。</div>
-        <div style={{display:"flex",gap:8,marginTop:10}}>
-          <button type="button" className="btn green" disabled={resetSaving} onClick={()=>void saveResetTimer(timer)}>{resetSaving?"儲存中…":"儲存重設"}</button>
-          <button type="button" className="btn soft" disabled={resetSaving} onClick={()=>setEditingTimerId(null)}>取消</button>
-        </div>
-      </div>}
     </div>;
   }
 
@@ -701,10 +676,33 @@ export default function BossTimerPage(){
                       <BossImage boss={stat.boss} size={58}/>
                       <div style={{fontSize:21,fontWeight:950}}>{stat.boss.boss_name}</div>
                     </div>
-                    <div className="muted" style={{marginTop:3}}>目前參考：{minutesLabel(stat.boss.respawn_min_minutes,stat.boss.respawn_max_minutes)}</div>
+                    <div className="muted" style={{marginTop:3}}>目前重生設定：{minutesLabel(stat.boss.respawn_min_minutes,stat.boss.respawn_max_minutes)}</div>
                   </div>
-                  <span className="status">{stat.intervals.length} 筆有效週期</span>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <span className="status">{stat.intervals.length} 筆有效週期</span>
+                    <button type="button" className="btn soft" onClick={()=>openBossSetting(stat.boss)}>⚙️ 調整重生時間</button>
+                  </div>
                 </div>
+
+                {editingBossKey===stat.boss.boss_key&&<div style={{marginTop:14,padding:14,border:"1px solid #d8cdbd",borderRadius:12,background:"#fffdf9"}}>
+                  <div style={{fontWeight:950,marginBottom:8}}>調整 {stat.boss.boss_name} 全頻道重生設定</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
+                    <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>基準重生時間（分）
+                      <input type="number" min="1" max="10080" value={bossBaseMinutes} onChange={e=>setBossBaseMinutes(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
+                    </label>
+                    <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>提前區間（-）
+                      <input type="number" min="0" max="1440" value={bossBeforeMinutes} onChange={e=>setBossBeforeMinutes(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
+                    </label>
+                    <label style={{display:"grid",gap:5,fontSize:13,fontWeight:800}}>延後區間（+）
+                      <input type="number" min="0" max="1440" value={bossAfterMinutes} onChange={e=>setBossAfterMinutes(Number(e.target.value))} style={{width:"100%",padding:10,border:"1px solid #d8cdbd",borderRadius:10}}/>
+                    </label>
+                  </div>
+                  <div className="muted" style={{marginTop:8}}>例如基準 60、-0、+0＝所有頻道固定 60 分鐘；基準 60、-5、+10＝所有頻道顯示 55～70 分鐘。</div>
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button type="button" className="btn green" disabled={bossSettingSaving} onClick={()=>void saveBossSetting(stat.boss)}>{bossSettingSaving?"儲存中…":"套用到這隻王"}</button>
+                    <button type="button" className="btn soft" disabled={bossSettingSaving} onClick={()=>setEditingBossKey(null)}>取消</button>
+                  </div>
+                </div>}
 
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,marginTop:14}}>
                   {[
